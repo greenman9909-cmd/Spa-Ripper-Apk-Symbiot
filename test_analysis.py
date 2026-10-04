@@ -260,6 +260,14 @@ class EvidenceTests(unittest.TestCase):
 
 
 class ArchiveAndCLITests(unittest.TestCase):
+    def test_misleading_filename_cannot_pass_expected_package_check(self):
+        data = apk({'AndroidManifest.xml': '<manifest package="com.uptodown"/>'})
+        with self.assertRaisesRegex(ValueError, 'expected com.crunchyroll.crunchyroid, found com.uptodown'):
+            server.inspect_apk(data, 'crunchyroll.apk', expected_package='com.crunchyroll.crunchyroid')
+        session = server.inspect_apk(data, expected_package='com.uptodown')
+        self.addCleanup(session['zip'].close)
+        self.assertEqual(session['report']['manifest']['package'], 'com.uptodown')
+
     def test_non_apk_compression_rejected(self):
         stream = io.BytesIO()
         with zipfile.ZipFile(stream, 'w', zipfile.ZIP_BZIP2) as archive:

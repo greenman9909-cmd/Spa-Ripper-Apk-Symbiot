@@ -31,7 +31,7 @@ WEB_EXT = {'.html', '.htm', '.js', '.mjs', '.css', '.json', '.map'}
 ARCHIVE_ERRORS = (ValueError, RuntimeError, zipfile.BadZipFile, NotImplementedError, EOFError, OSError, zlib.error)
 
 
-def inspect_apk(data, name='app.apk'):
+def inspect_apk(data, name='app.apk', expected_package=None):
     if len(data) > MAX_UPLOAD:
         raise ValueError('APK exceeds the 256 MB upload limit.')
     try:
@@ -95,6 +95,9 @@ def inspect_apk(data, name='app.apk'):
                        and f['path'].startswith('assets/')),
                       key=lambda p: (PurePosixPath(p).name.lower() != 'index.html', len(p), p))
         analysis = evidence_analysis(archive, files, html)
+        actual_package = analysis['manifest'].get('package')
+        if expected_package and actual_package != expected_package:
+            raise ValueError(f'APK identity mismatch: expected {expected_package}, found {actual_package or "an undecodable package"}. The filename is not proof of app identity.')
         signals = [f['name'] for f in analysis['frameworks']]
         if html:
             signals.append('Bundled HTML')
@@ -313,15 +316,16 @@ def main(argv=None):
     parser.add_argument('--report', type=Path, metavar='JSON', help='Save the analysis (otherwise printed to stdout)')
     parser.add_argument('--export', type=Path, metavar='ZIP', help='Export a bundled web candidate')
     parser.add_argument('--entry', help='Candidate APK path, such as assets/www/index.html')
+    parser.add_argument('--expected-package', help='Require the decoded Android package to match this identity')
     args = parser.parse_args(argv)
-    if not args.inspect and (args.report or args.export or args.entry):
-        parser.error('--report, --export, and --entry require --inspect')
+    if not args.inspect and (args.report or args.export or args.entry or args.expected_package):
+        parser.error('--report, --export, --entry, and --expected-package require --inspect')
     if args.inspect:
         session = None
         try:
             with args.inspect.open('rb') as source:
                 data = source.read(MAX_UPLOAD + 1)
-            session = inspect_apk(data, args.inspect.name)
+            session = inspect_apk(data, args.inspect.name, args.expected_package)
             bundle = None
             if args.export:
                 candidates = session['report']['candidates']

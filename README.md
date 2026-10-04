@@ -96,7 +96,7 @@ python -m unittest discover -v
 python -m compileall -q server.py analysis.py android_formats.py
 ```
 
-The 42-test suite covers binary XML string pools and typed values, launcher aliases, malformed/truncated structures, DEX modified UTF-8, seeded random parser input, evidence corroboration, endpoint hint redaction, graph cycles, sibling exports, deterministic ZIPs and per-file hash fidelity, skipped analysis, archive corruption/traversal/symlinks/collisions/unsupported compression, CLI errors, HTTP isolation, export preflight, concurrency limits, and session eviction.
+The 43-test suite covers binary XML string pools and typed values, launcher aliases, malformed/truncated structures, DEX modified UTF-8, seeded random parser input, evidence corroboration, endpoint hint redaction, graph cycles, sibling exports, deterministic ZIPs and per-file hash fidelity, skipped analysis, archive corruption/traversal/symlinks/collisions/unsupported compression, CLI errors, HTTP isolation, export preflight, concurrency limits, and session eviction.
 
 Locally validated on Windows with Python 3.11 and 3.14. CI runs the full suite on Windows and Ubuntu with Python 3.10, 3.12, and 3.14.
 
