@@ -38,6 +38,10 @@ public final class BackendBridge {
         if(profiles==null||!profiles.cloudOwner.equals(CloudSession.userId()))profiles=new LocalProfiles(loader);return profiles;
     }
     private BackendBridge() {}
+    static synchronized String preferredSubtitleLanguage(){
+        try{return profiles==null?"en-US":profiles.route("/accounts/v1/me/multiprofile/"+profiles.selectedId(),"GET",new JSONObject()).optString("preferred_content_subtitle_language","en-US");}
+        catch(Exception unavailable){return "en-US";}
+    }
     static boolean replacementHost(String host){
         return host!=null&&(host.equals("crunchyroll.com")||host.endsWith(".crunchyroll.com")
             ||host.equals("cr-play-service.prd.crunchyrollsvc.com"));
@@ -87,13 +91,22 @@ public final class BackendBridge {
         String path=uri.getPath();
         if(path.contains("config_delta"))return new JSONObject().put("config_delta",new JSONObject());
         if(path.endsWith("index/v2"))return new JSONObject().put("service_available",true);
+        if(path.matches("/assets/v2/[^/]+/(avatar|wallpaper)"))return NativeAssets.catalog();
+        if(path.endsWith("/accounts/v2")){
+            CloudSession.init(loader);CloudSession.signUp(new JSONObject(requestBody(loader,request)));return new JSONObject();
+        }
+        if(path.endsWith("/accounts/v1/password_forgot")){
+            CloudSession.init(loader);CloudSession.recover(new JSONObject(requestBody(loader,request)).optString("email"));return new JSONObject();
+        }
         // Legacy model label for replacement-backend capabilities only. This is
         // not an official subscription, token, license or access to its media.
         if(path.startsWith("/subs/")&&path.endsWith("/benefits"))return new JSONObject().put("items",new JSONArray().put(new JSONObject().put("benefit","cr_premium").put("source","apkforge-local")));
         // The replacement guest backend offers no subscriptions or purchases.
         if(path.startsWith("/subs/"))return new JSONObject().put("items",new JSONArray());
-        if(path.startsWith("/skip-events/"))return new JSONObject().put("mediaId",path.substring(path.lastIndexOf('/')+1).replace(".json",""));
-        if(path.startsWith("/talkbox/guestbooks"))return NativeCommunity.route(uri,(String)request.getClass().getField("b").get(request));
+        if(path.startsWith("/skip-events/"))return NativePlayback.skipEvents(path.substring(path.lastIndexOf('/')+1).replace(".json",""));
+        if(path.startsWith("/talkbox/guestbooks")){
+            String raw=requestBody(loader,request);return NativeCommunity.route(uri,(String)request.getClass().getField("b").get(request),raw.isEmpty()?new JSONObject():new JSONObject(raw),profiles(loader));
+        }
         if(NativeCatalog.handles(path))return NativeCatalog.route(uri);
         if(path.contains("/apkforge/playback/"))return NativePlayback.resolve(path.substring(path.lastIndexOf('/')+1));
         if(path.matches("/v1/ANI[0-9]+E[0-9]+D?/android/phone/play"))throw new HttpFailure(501,"native-playback-api-unavailable");
@@ -154,17 +167,40 @@ public final class BackendBridge {
             return profileContent(profiles(loader),uri,method,body.isEmpty()?new JSONObject():new JSONObject(body));
         }
         if(path.endsWith("/home_feed")){NativeAccountState.initialize(loader);return NativeHomeFeed.home(integer(uri.getQueryParameter("start"),0),integer(uri.getQueryParameter("n"),25));}
+        if(path.endsWith("/discover/apkforge-airing")||path.endsWith("/discover/apkforge-season"))return NativeDiscovery.route(Uri.parse("https://local/browse?seasonal_tag="+(path.endsWith("airing")?"current":NativeDiscovery.currentSeasonId())+"&start="+Math.max(0,integer(uri.getQueryParameter("start"),0))+"&n="+integer(uri.getQueryParameter("n"),25)));
+        if(NativeDiscovery.handles(path)){
+            try{return NativeDiscovery.route(uri);}
+            catch(java.io.IOException unavailable){Log.w(TAG,"Discovery metadata unavailable; trying bounded ani.pm fallback");}
+        }
         if(path.endsWith("/search")){
             String q=uri.getQueryParameter("q");if(q==null||q.trim().length()<2)return envelope(new JSONArray());
-            JSONArray found=api("/titles?adult=0&limit=25&q="+URLEncoder.encode(q.trim(),"UTF-8")).getJSONArray("data");cache(found);
+            String term=q.trim().toLowerCase(java.util.Locale.US);
+            JSONArray found=api("/titles?q="+URLEncoder.encode(q.trim(),"UTF-8")+"&adult=0&limit=25").getJSONArray("data");
+            // Some provider edges return an empty title list while /top remains
+            // available. Filter that real catalog as a bounded, deterministic fallback.
+            if(found.length()==0){
+                JSONArray candidates=api("/top?range=all&adult=0&limit=100").getJSONArray("data");found=new JSONArray();
+                for(int i=0;i<candidates.length()&&found.length()<25;i++){
+                    JSONObject candidate=candidates.getJSONObject(i);
+                    if(candidate.optString("title").toLowerCase(java.util.Locale.US).contains(term)
+                        ||candidate.optString("nativeTitle").toLowerCase(java.util.Locale.US).contains(term))found.put(candidate);
+                }
+            }
+            cache(found);
             JSONArray converted=new JSONArray();for(int i=0;i<found.length();i++)converted.put(panel(found.getJSONObject(i)));
-            return envelope(new JSONArray().put(new JSONObject().put("type","SERIES").put("count",converted.length()).put("items",converted))).put("total",converted.length());
+            return envelope(new JSONArray().put(new JSONObject().put("type","series").put("count",converted.length()).put("items",converted))).put("total",converted.length());
         }
+        if(path.endsWith("/seasonal_tags"))return NativeHomeFeed.seasonalTags();
         if(path.endsWith("/browse")||path.contains("/discover/apkforge-")){
-            String query=path.endsWith("/browse")?"/top?range=all&adult=0&limit=100":NativeHomeFeed.query(path.substring(path.lastIndexOf("apkforge-")+9));
+            String seasonal=uri.getQueryParameter("seasonal_tag");
+            String query=seasonal!=null?NativeHomeFeed.seasonalQuery(seasonal):path.endsWith("/browse")?"/top?range=all&adult=0&limit=100":NativeHomeFeed.query(path.substring(path.lastIndexOf("apkforge-")+9));
             JSONArray found=api(query).getJSONArray("data");cache(found);
-            JSONArray converted=new JSONArray();int start=Math.max(0,integer(uri.getQueryParameter("start"),0)),limit=integer(uri.getQueryParameter("n"),25);
-            for(int i=start;i<Math.min(found.length(),start+Math.max(1,Math.min(limit,100)));i++)converted.put(panel(found.getJSONObject(i)));
+            JSONArray converted=new JSONArray();int start=Math.max(0,integer(uri.getQueryParameter("start"),0)),limit=integer(uri.getQueryParameter("n"),25),seen=0;
+            for(int i=0;i<found.length()&&converted.length()<Math.max(1,Math.min(limit,100));i++){
+                JSONObject record=found.getJSONObject(i);
+                if(seasonal!=null&&!record.optString("status").toLowerCase(java.util.Locale.US).contains("airing"))continue;
+                if(seen++<start)continue;converted.put(panel(record));
+            }
             return envelope(converted).put("total",found.length());
         }
         if(path.contains("/objects/")){
@@ -175,7 +211,7 @@ public final class BackendBridge {
             }
             return envelope(converted);
         }
-        if(path.contains("/history")||path.contains("/categories")||path.contains("/seasonal_tags"))return envelope(new JSONArray());
+        if(path.contains("/history")||path.contains("/categories"))return envelope(new JSONArray());
         throw new UnsupportedOperationException(path);
     }
     private static JSONObject profileContent(LocalProfiles profile,Uri uri,String method,JSONObject body)throws Exception {
@@ -217,13 +253,15 @@ public final class BackendBridge {
         // Supplying portrait dimensions here expands its hero to a full poster.
         JSONObject wide=new JSONObject().put("source",hasBanner?title.optString("banner"):title.optString("poster")).put("height",360).put("width",640).put("type","poster_wide");
         JSONObject images=new JSONObject().put("poster_tall",new JSONArray().put(new JSONArray().put(tall))).put("poster_wide",new JSONArray().put(new JSONArray().put(wide)));
-        JSONObject metadata=new JSONObject().put("season_count",1).put("episode_count",ep.optInt("total")).put("is_subbed",ep.optInt("sub")>0).put("is_dubbed",ep.optInt("dub")>0).put("maturity_ratings",new JSONArray().put("TV-14")).put("audio_locales",new JSONArray().put("ja-JP").put("en-US")).put("subtitle_locales",new JSONArray().put("en-US"));
+        JSONArray audio=new JSONArray();if(ep.optInt("sub")>0)audio.put("ja-JP");if(ep.optInt("dub")>0)audio.put("en-US");
+        JSONArray maturity=new JSONArray();if(!title.optString("rating","").isEmpty())maturity.put(title.getString("rating"));
+        JSONObject metadata=new JSONObject().put("season_count",1).put("episode_count",ep.optInt("total")).put("is_subbed",ep.optInt("sub")>0).put("is_dubbed",ep.optInt("dub")>0).put("maturity_ratings",maturity).put("audio_locales",audio).put("subtitle_locales",new JSONArray());
         return new JSONObject().put("id","ANI"+title.getInt("anilistId")).put("type","series").put("title",title.optString("title")).put("description",title.optString("synopsis")).put("images",images).put("series_metadata",metadata).put("channel_id","crunchyroll");
     }
     static JSONObject series(int id)throws Exception {
         JSONObject title;synchronized(titles){title=titles.get(id);}
         if(title!=null&&title.has("episodeList"))return title;
-        title=api("/series/"+id+"?adult=0").getJSONObject("data");synchronized(titles){titles.put(id,title);}return title;
+        title=api("/series/"+id+"?adult=0").getJSONObject("data");NativeMetadata.enrich(title);synchronized(titles){titles.put(id,title);}return title;
     }
     static JSONObject api(String path)throws Exception{
         synchronized(responses){CachedResponse hit=responses.get(path);if(hit!=null&&hit.expires>android.os.SystemClock.elapsedRealtime())return new JSONObject(hit.json);}

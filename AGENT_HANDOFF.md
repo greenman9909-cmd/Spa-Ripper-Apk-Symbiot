@@ -1,93 +1,84 @@
-# Continue the original-UI Android app
+# Original-UI app continuation guide
 
-Updated 2026-10-05. Read this before changing the app. The user asked to stop feature work, publish the files and leave a concrete continuation guide. This is an experimental backend migration, **not a production-ready app**.
+Updated 2026-10-05 for **0.4.6 / 1000046**. The user resumed development after the earlier handoff and requested multilingual subtitles, preferring hard subs when available and allowing separate tracks. This preview is not production-ready.
 
-## User requirements
+## Requirements and publication
 
-Preserve the original Crunchyroll APK screens, layouts, navigation, profile selector/creator and native player. The earlier web/reconstructed interface was rejected. Use replacement catalog/playback/account services, keep guest access optional, prevent playback from launching ad/browser windows, and complete Home, My Lists, Browse, Simulcasts, search, episode images, real skip-intro metadata, avatars and comments. The user has reported repeated Home rows and title/video errors. Do not report those device-specific failures as fixed without reproducing and checking them.
+Preserve the supplied APK's original screens, layouts, profile picker/creator, navigation and native player. The reconstructed HTML interface was rejected. Keep guest access optional; use replacement catalog/media/Supabase services without executing provider ad pages or launching browsers.
 
-Publication to this GitHub repository is authorized. No permission is given to delete user data, uninstall their original app, expose credentials, or modify their emulator. WebLoom was paused at the user's request; do not delete or resume it as part of this task.
+Continue branch codex/evidence-driven-apk-analysis, draft PR #1, repository greenman9909-cmd/Spa-Ripper-Apk-Symbiot. Publication here is authorized. Release: v0.4.6-native-preview; APK Original-UI-AniPM-v0.4.6.apk. Do not use credentials pasted into chat, uninstall the user's official app, expose secrets, or modify their emulator. WebLoom was paused; do not delete/resume it or change billing.
 
-## Resume point and deliverables
+## Implemented and tested
 
-- Repository: `greenman9909-cmd/Spa-Ripper-Apk-Symbiot`.
-- Continue branch `codex/evidence-driven-apk-analysis`; draft PR #1 contains the implementation.
-- Releases use versioned APK assets and prerelease tags. Release 0.4.4 was the last download before this handoff; 0.4.5 adds Home pagination and these instructions.
-- Current output: `android-build/Original-UI-AniPM.apk`. Publish it as `Original-UI-AniPM-v0.4.5.apk`; Android versionName is `0.4.5`, versionCode `1000045`.
-- Read `NATIVE_MIGRATION.md` for architecture and historical verification. Some historical counts there refer to earlier builds.
-
-## What works, and what the evidence actually covers
-
-Original startup, profile selection/creation, Home collections, basic Browse/search, series/episodes and local lists run through retained native screens. Local profiles separate watchlist, progress, ratings and lists. Model contracts cover list create/rename/delete, audio versions, next episode, rating data, native availability and HLS mapping.
-
-One Piece episode 1 sub played with decoded frames in the original player on the isolated emulator; pause, seek and landscape fullscreen were exercised on 0.4.3. Bleach episode 1 sub loaded the original player. This does not establish support for every title, language, subtitle or device. The user's generic “Oops” error remains unreproduced.
-
-0.4.5 fixes an identified backend pagination defect: `/home_feed` previously ignored `start` and `n`, returning the hero and all collections again. It now slices one stable feed snapshot, returns its full total, and ends with an empty page. First-page requests can refresh after ten minutes; later pages keep the snapshot. Three regression contracts cover disjoint pages, final-page termination and integer bounds. **Full UI scrolling has not been rechecked on this new build.** Home is still a finite eight-collection feed, not a full infinite catalog.
-
-Current checks: 44 Python tests and 37 contracts against the actual original Android/Gson models passed for 0.4.5. Build verifies v2/v3 signatures. Supabase tests previously checked invalid login and denied private reads; **successful native login/restore is unverified**. Never treat signatures, model contracts or a successful compilation as full product verification.
-
-## Files to change
-
-`build_preserved_apk.py` retains original resources/screens, applies six backend/player hooks and appends adapter DEX. Only manifest root versionName/versionCode are changed; its decoded semantics are checked against the source. Bump `BUILD_VERSION`, `BUILD_CODE` and packaging tests for each release. Do not replace the native UI with HTML.
-
-Adapter sources are in `native_adapter/src/dev/apkforge/bridge/`:
-
-| File | Responsibility and current limitation |
+| Area | Current behavior and evidence |
 | --- | --- |
-| `BackendBridge.java` | Routes intercepted original service requests; unknown routes fail explicitly. Search ignores pagination; Browse uses top 100; categories/seasonal tags are empty. Details cache does not expire separately. |
-| `NativeHomeFeed.java` | Eight provider collections; 0.4.5 snapshot pagination fix. Four fetch workers; partial collection failure is tolerated. |
-| `NativeCatalog.java` | Series, one synthetic season, episodes/audio/next. Missing names use episode numbers; missing episode photos fall back to series posters. |
-| `NativePlayback.java` | Anivexa source resolution, public MegaPlay source-wrapper decoding, bounded background I/O, HLS mapping and media headers. Intro/outro metadata is currently discarded. |
-| `LocalProfiles.java`, `NativeLists.java`, `NativeRatings.java` | Guest/cloud storage separation and local profile state. Avatar defaults exist but avatar catalog is missing. |
-| `CloudSession.java` | Supabase password login, encrypted tokens, best-effort snapshot backup/initial restore. No signup/recovery or conflict-aware sync. |
-| `NativeAccountState.java` | Initializes original guest account observer so blank email banner disappears. |
-| `NativeCommunity.java` | Empty comment reads; writes return 501. No comments database exists. |
+| Hybrid discovery | AniList paged search/Browse, genres/sorts/quarter-based Simulcasts; ani.pm episode/audio availability. Two disjoint 25-item pages checked live; native Browse/Action and Frieren search exercised. Offline fallback remains bounded top-100 without equivalent paging/filtering. Catalog membership does not imply playable video. |
+| Home | Ten collections including current season/airing. Stable finite pagination prevents repeating the hero. Eight vertical swipes traversed all ten collections and further swipes stayed at the final rows without a repeated hero. Return/rotation acceptance remains outstanding. |
+| Episode metadata | AniZip mapping validated against AniList ID adds real names, images, descriptions and dates while preserving provider availability. Native One Piece/Frieren player/next rows show real images/names. Missing fields retain fallbacks; one synthetic season per AniList entry remains. |
+| Native player / skips | Original HLS player, background resolution and provider headers. One Piece/Frieren played on the own AVD. Original Skip Intro appeared using real times. Click/boundary checks and all devices/audio versions remain unverified. |
+| Subtitles | Native locales including es-ES, es-419, pt-BR; known labels recover languages marked und. Lazy WebVTT-to-ASS conversion feeds original libass. English/both Spanish files fetched/converted live; multilingual menu and visible Spain Spanish dialogue verified for Frieren episode 1. Other-language rendering remains to test. Styles/positions are simplified; timing, Unicode and line breaks kept. |
+| Hard subs | Explicit matching hardsub_locale sources prioritized; separate tracks allowed. No tested live source advertised a hard-sub locale. Do not claim burned-in video generation or hard subs for all episodes. |
+| Avatars | Original picker with replacement catalog artwork. Native selection/save and cloud avatar snapshot ani-cover-21 verified. This is not the original service's licensed character-avatar catalog. |
+| Cloud auth | Native password login, encrypted session restart/update persistence, guest/cloud separation and avatar backup checked with an own temporary fixture. Signup/recovery routes added but email flows unverified. Fresh-device restore and conflict-aware multi-device sync remain incomplete. |
+| Comments | Guest reads; authenticated create/reply/like/unlike/own delete/spoiler; paging, RLS and rate limiting. Existing reads, replies, likes and owner reply deletion exercised through native screens; cross-owner denial checked in SQL. Popularity ranking and moderation/admin reporting remain incomplete. |
 
-Tests: `test_analysis.py`, `test_engine.py`, `native_adapter/tests/dev/apkforge/bridge/ModelContractProbe.java`. `verify_native_contracts.py` expects exactly 37 cases; update it when adding cases. `native_ui_probe.py` performs guarded native UI inspection/input.
+Current validation: **44 Python tests, 58 original-model contracts**, plus live catalog/HLS/English-and-Spanish conversion/invalid-auth/private-read checks. Runtime evidence covers one Android 37 isolated AVD, not every title/device. Historical 0.4.3 checks exercised pause/seek/fullscreen. The user's device-specific Oops failure remains unreproduced.
 
-## Providers and account project
+## Compatibility traps
 
-- ani.pm catalog: `https://ani.pm/api/partner/v1`, routes `/top`, `/titles`, `/series/{anilistId}`. Use the existing advertised User-Agent `APKForge/0.4 (Android)`; a default Python UA has returned 403. Public playback documentation is embed-oriented. Do not invent direct native stream endpoints.
-- Alternate watch API: `https://anivexaapi-aniko2.hf.space/api/watch/{anilistId}/{sub|dub}/{episode}`. `ssub`/`sdub` contain stream bundles. Candidate links are embeds, not HLS playlists. Existing resolver reads the public source response and validates an actual `#EXTM3U` manifest.
-- Playback requires provider User-Agent and Referer on playlists/segments, configured in `NativePlayback.configureMediaFactory`. Keep Kotlin suspension/background workers; synchronous resolution previously caused `NetworkOnMainThreadException`. Do not execute ad scripts or add DRM/license bypasses.
-- AniList metadata can support a larger catalog, but it is not a streaming source. Verify primary API schemas and title mappings before adding it. Never fabricate episode images, air dates or intro times.
-- Supabase: **Spa-Ripper-AniPM**, project `yhccrdatocqqniblpshm`, URL `https://yhccrdatocqqniblpshm.supabase.co`, region eu-west-3. Public publishable key is already in the app; never embed service-role keys.
-- Applied schema: `supabase/migrations/20261005_account_state.sql`. Table `account_state` stores an owner-only JSON snapshot. RLS has four authenticated ownership policies; anonymous reads denied. No other account/comments schema has been deployed.
-- Organization: `asimhuma3795-5163's projects`; WebLoom is inactive. Project creation at 0/month was already approved. Do not create another project or introduce billing changes.
-- Never use the historical Yoru Supabase project or credentials pasted into chat. Do not commit tokens, passwords, signing keys, original decoded sources or provider signed URLs.
+- Home must honor start/n, keep one snapshot and end with an empty page; never repeat rows to simulate infinite scrolling.
+- Audio versions and adapter availability dates must agree with the asset. Access dates are not broadcast dates. Episode audio labels now describe the chosen asset.
+- Preserve Kotlin suspension and bounded workers; synchronous provider I/O caused NetworkOnMainThreadException.
+- The original subtitle overlay is a bundled local WebView/WASM libass renderer, not a provider embed player. It requires ASS. NativeSubtitles converts selected WebVTT on the request worker. Original HTML/WASM/fonts are unchanged. Never execute remote embed/ad scripts.
+- Talkbox has its own DateTypeAdapter: yyyy-MM-dd'T'HH:mm:ssZ with +0000 offsets. General GsonHolder differs. Raw PostgreSQL fractions and plain Z comment dates both crashed the client; tests use the actual Talkbox configuration.
+- LocalCommentsAdapter.getItemId parses IDs as long. UUID comment IDs crashed RecyclerView. UUIDs remain internal; numeric identity strings are returned and mapped back for writes/RPC.
+- AniList total/lastPage are unreliable. Paging follows hasNextPage and uses a growing lower bound until the last page.
 
-## Highest-priority unfinished work and acceptance checks
+## Source map and services
 
-1. **Reproduce the user's failure and verify Home.** Record installed APK version and the failed title/audio/episode; inspect sanitized native logs on the isolated device. Scroll through all Home rows, return from series/player, switch tabs, rotate and refresh. No duplicated hero/rows, automatic jump to top, stale-page reuse, request loop or crash. Test 0.4.5 before further UI-related changes.
-2. **Real catalog navigation.** Implement original categories, sort/genre filters and seasonal tag models; wire Simulcasts. Add a paged metadata provider or documented provider paging. Search must honor offsets/limits and total. Test several pages, empty results, filter changes, retry and returning from detail. Do not duplicate rows to simulate infinite scrolling. Catalog-only items must honestly report playback availability.
-3. **Episode metadata and player controls.** Verify a real per-episode image source/mapping, retain provider audio availability and use actual names/images when present. Read original skip-events model from decoded sources, map real intro/outro ranges from source bundles, and exercise the retained skip button at start/end boundaries. Do not use a generic fixed 90-second intro. Verify next episode, resume, subtitles and dub playback.
-4. **Profiles and cloud accounts.** Implement original avatar-catalog endpoints/models so the native picker works. Complete signup/recovery and test sign-in, sign-out, session refresh, restart, two-user isolation and restore on a second isolated install. Improve snapshot conflict handling before claiming multi-device sync. Do not test with the user's pasted password or overwrite existing snapshots.
-5. **Comments.** Design owned replacement comment storage with authentication, RLS, validation, pagination and safe deletion/reporting. Match retained comment service/model contracts; test guest read and authenticated write plus cross-user denial. Empty responses are placeholders, not implementation.
-6. **Release readiness.** Test network loss/provider errors and multiple Android versions/screen sizes. Resolve unsupported routes needed by real screens, avoid synthetic maturity/audio metadata, document provider limits and production signing strategy. Downloads, music and store are unfinished; scope them explicitly. Production-ready requires these checks, not just a renamed preview.
+build_preserved_apk.py checks the original SHA, preserves resources/assets/libraries/screens, changes only manifest root versions, rebuilds classes2 and appends classes5. Eight hooks: s70/e, OkHttp factory, guest token storage, cr/l, cr/g, ll/a, do/b and gk/b. **4,665 original non-signature members** remain byte-identical, excluding manifest/classes2/removed stamp.
 
-## Local build and testing
+Adapter sources: native_adapter/src/dev/apkforge/bridge/.
+BackendBridge routes native requests; NativeDiscovery/NativeMetadata implement AniList/AniZip; NativeHomeFeed/NativeCatalog map UI models; NativePlayback handles HLS/skips/tracks; NativeSubtitles registers local URLs/converts cues; NativeAssets maps artwork; CloudSession/LocalProfiles handle auth/state; NativeCommunity handles cloud comments; NativeLists/NativeRatings/NativeAccountState retain local features.
 
-Working repository: `C:\Users\green\Documents\antigravity\mysterious-fermi\Spa-Ripper-Apk-Symbiot`.
+Providers:
+- https://ani.pm/api/partner/v1: top/titles/series. Use existing advertised UA; default Python UA can return 403. Public embed docs do not establish native direct streams.
+- https://graphql.anilist.co POST metadata; https://api.ani.zip/mappings?anilist_id=ID episode metadata. Neither establishes video availability.
+- https://anivexaapi-aniko2.hf.space/api/watch/ID/sub-or-dub/EP: ssub/sdub. Resolver validates HLS and applies provider UA/Referer to media/subtitles. Do not introduce media DRM/license bypasses.
+- Supabase **Spa-Ripper-AniPM**, project **yhccrdatocqqniblpshm**, https://yhccrdatocqqniblpshm.supabase.co, eu-west-3, approved 0/month. Public publishable key already in client; never embed service-role keys.
 
-Original input: `C:\Users\green\Downloads\com.crunchyroll.crunchyroid_v3.61.0-770_Android-8.0.apk`. Required SHA-256: `9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1`. The similarly named Uptodown APK is the store package and is the wrong input.
+All six checked-in migrations are deployed: account snapshots, comments, rate limit, votes, native IDs and comment avatars. Snapshots are owner-private. Comments permit guest read/authenticated owner write/delete. Vote rows are private; fixed-search-path helper exposes aggregates/caller flags. Latest security advisor warning: leaked-password protection disabled; do not silently add paid features.
 
-Full Apktool decode: `recovered/crunchyroll-code`; optional JADX sources: `recovered/crunchyroll-java/sources` (238 decompilation failures: use smali as truth). Windows long paths may require `\\?\` prefixes. Apktool 3.0.3 is `.tools/apktool.jar`. Android SDK needs platform `android-37.0` and build tools `36.0.0`.
+Remove temporary own test accounts/comments after checks. Never publish fixture credentials, tokens, signing keys, decoded original sources or signed media URLs. android-build is ignored. Untracked artifacts predates this continuation: preserve/inspect before publication.
 
-```powershell
-$env:PATH='C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot\bin;C:\Users\green\AppData\Local\Android\Sdk\platform-tools;'+$env:PATH
-python -m unittest discover -q
-python build_preserved_apk.py --reference-apk 'C:\Users\green\Downloads\com.crunchyroll.crunchyroid_v3.61.0-770_Android-8.0.apk' --decoded recovered/crunchyroll-code
-python verify_native_contracts.py
-python verify_native_contracts.py --stream-live --cloud-negative
-python native_ui_probe.py
-```
+## Remaining acceptance work
 
-Only mutate **emulator-5560** after checking exact AVD **APKForge_Original_UI**. Never install, uninstall, clear data/logs, rotate or send input to user emulator-5554. The checked-in probe guards AVD identity. If the own emulator is absent, start that AVD or stop native tests; do not select an arbitrary connected device.
+1. Reproduce exact failed version/title/audio/episode. Check all Home rows, scroll restoration, tabs, rotation, refresh, retry and provider outages.
+2. Visibly verify Latin American Spanish/English/other languages, off, seek, next episode, restart and dub. Verify skip click reaches real end. Check hard preference only with a confirmed matching source. Never advertise absent languages.
+3. Discovery beyond two pages, empty search, sort/filter changes, Simulcasts selection. Separate future/unmapped catalog metadata from playable titles. Details cache has no independent expiry; fallback paging is limited.
+4. Fresh-install restore, refresh failure, two-user UI isolation, signup confirmation/recovery and safe multi-device reconciliation.
+5. Comment popularity sorting, moderation/report workflow, guest-write UX, avatar refresh, pagination and parent deletion.
+6. Lists/watchlist/progress across profiles/cloud restore. History API remains empty; only playheads persist. Downloads/music/store are unsupported. Test multiple Android versions/sizes and production signing/distribution.
 
-Signing key and tools are ignored local build dependencies. The development-signed APK cannot update an official installation. It can update earlier previews using the same local key; do not uninstall the user's official package to make installation succeed. Preserve that key privately for preview updates.
+## Build, tests and publication
 
-## Publishing the next increment
+Workspace: C:\Users\green\Documents\antigravity\mysterious-fermi\Spa-Ripper-Apk-Symbiot.
+Original: C:\Users\green\Downloads\com.crunchyroll.crunchyroid_v3.61.0-770_Android-8.0.apk.
+SHA-256: 9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1.
+Uptodown is the wrong package. Decode: recovered/crunchyroll-code. Optional JADX: recovered/crunchyroll-java/sources (238 failures; smali is truth). Apktool 3.0.3: .tools/apktool.jar. SDK platform android-37.0/build-tools 36.0.0.
 
-Commit source/tests/docs on the existing branch and push. Keep PR #1 attached; update its body to final implementation and evidence. Copy the new APK to a versioned filename, compute SHA-256, attach provenance and truthful validation notes. Create an experimental GitHub prerelease with a **full 40-character commit SHA** as `--target` (a short SHA has failed). Use a body file for multiline notes. Do not overwrite older release assets or publish signed temporary URLs as permanent download links.
+Commands, with JDK/ADB on PATH:
 
-`.tools/verify_release.py` is stale: it assumes an unchanged manifest and 4,666 preserved members. Since 0.4.4, only version attributes change and the preserved-member count is 4,665, excluding manifest, classes2.dex, signing stamp and META-INF. Update its assumptions before using it. Compare `version_manifest(originalManifest)` against the built manifest and all other original members byte for byte. New release notes must distinguish earlier playback evidence from new runtime checks.
+    python -m unittest discover -q
+    python build_preserved_apk.py --reference-apk 'C:\Users\green\Downloads\com.crunchyroll.crunchyroid_v3.61.0-770_Android-8.0.apk' --decoded recovered/crunchyroll-code
+    python verify_native_contracts.py --stream-live --catalog-live --subtitles-live --cloud-negative
+    python native_ui_probe.py
+
+JDK: C:\Program Files\Microsoft\jdk-21.0.12.101-hotspot\bin.
+ADB: C:\Users\green\AppData\Local\Android\Sdk\platform-tools.
+
+Only mutate **emulator-5560** after verifying exact AVD **APKForge_Original_UI**. Never operate user emulator-5554 or select an arbitrary fallback. UI probe masks saved/printed passwords and rejects stale/null dumps; retry fresh during transitions.
+
+Development signer updates previews using the same local key, not the official APK. Never uninstall the user's official app. Keep the signing key private.
+
+Bump version/code and packaging tests. Commit source/tests/migrations/docs on the existing branch and push; attach PR #1. Publish unique versioned APK/provenance/truthful validation as a prerelease using the full 40-character commit SHA target. Never overwrite old assets. .tools/verify_release.py has stale manifest/member assumptions; use current build checks. Compilation alone is not product verification.

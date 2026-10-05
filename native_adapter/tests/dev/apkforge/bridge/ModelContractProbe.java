@@ -11,6 +11,14 @@ public final class ModelContractProbe {
         return deserialize.invoke(gson,json.toString(),Class.forName(name));
     }
     private static Object call(Object value,String method)throws Exception {return value.getClass().getMethod(method).invoke(value);}
+    private static Object decodeComment(JSONObject data)throws Exception {
+        java.text.SimpleDateFormat format=new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ",java.util.Locale.US);
+        Object adapter=Class.forName("com.ellation.crunchyroll.api.DateTypeAdapter").getConstructor(java.text.SimpleDateFormat.class,java.text.SimpleDateFormat.class,java.text.SimpleDateFormat.class).newInstance(format,format,new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",java.util.Locale.US));
+        Object builder=Class.forName("com.google.gson.GsonBuilder").getConstructor().newInstance();
+        builder.getClass().getMethod("registerTypeAdapter",java.lang.reflect.Type.class,Object.class).invoke(builder,java.util.Date.class,adapter);
+        Object talkbox=builder.getClass().getMethod("create").invoke(builder);
+        return talkbox.getClass().getMethod("fromJson",String.class,Class.class).invoke(talkbox,data.toString(),Class.forName("com.ellation.crunchyroll.api.etp.commenting.model.Comment"));
+    }
     private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
     public static void main(String[] args)throws Exception {
         gson=Class.forName("com.ellation.crunchyroll.api.GsonHolder").getMethod("getInstance").invoke(null);
@@ -76,6 +84,10 @@ public final class ModelContractProbe {
         check(((java.util.List<?>)call(feed,"getItemsIds")).size()==1&&call(feed,"getLink").equals("/content/v2/discover/apkforge-popular"),"Home must deduplicate records and exclude adult titles");checks++;
         check(NativeHomeFeed.query("popular").contains("range=week")&&NativeHomeFeed.query("movies").contains("format=MOVIE"),"View All must use the same collection filters");checks++;
         try{NativeHomeFeed.query("unknown");throw new AssertionError("Unknown collection must fail");}catch(BackendBridge.HttpFailure expected){check(expected.status==404,"Unknown collection status");checks++;}
+        JSONObject seasonalTags=NativeHomeFeed.seasonalTags();
+        JSONObject seasonal=seasonalTags.getJSONArray("data").getJSONObject(0);
+        check(seasonal.getString("id").equals("current")&&seasonal.getJSONObject("localization").getString("title").equals("Currently Airing"),"Simulcast season tag must expose a resolvable live tag");checks++;
+        check(NativeHomeFeed.seasonalQuery("current").contains("range=today"),"Simulcast tag must use the live provider collection");checks++;
         org.json.JSONArray feedRows=new org.json.JSONArray().put(new JSONObject().put("id","hero")).put(new JSONObject().put("id","row-1")).put(new JSONObject().put("id","row-2"));
         JSONObject firstPage=NativeHomeFeed.page(feedRows,0,2),secondPage=NativeHomeFeed.page(feedRows,2,2);
         check(firstPage.getJSONArray("data").length()==2&&secondPage.getJSONArray("data").length()==1&&secondPage.getJSONArray("data").getJSONObject(0).getString("id").equals("row-2"),"Scrolling must not repeat the hero or earlier rows");checks++;
@@ -104,11 +116,59 @@ public final class ModelContractProbe {
         for(String unsafe:new String[]{"http://example.invalid/a","https://127.0.0.1/a","https://user:password@example.invalid/a","file:///a"}){
             try{NativePlayback.publicHttps(unsafe);throw new AssertionError("Invalid source URL accepted");}catch(java.io.IOException expected){}
         }checks++;
+        Object category=decode("com.ellation.crunchyroll.model.categories.Category",NativeDiscovery.categories().getJSONArray("data").getJSONObject(0));
+        check(call(category,"getTenantCategoryId").equals("action")&&call(call(category,"getLocalization"),"getTitle").equals("Action"),"Native category localization contract");checks++;
+        JSONObject filters=NativeDiscovery.variables(android.net.Uri.parse("https://local/browse?categories=sci-fi,action&seasonal_tag=2026-fall&sort_by=alphabetical&q=Test"));
+        check(filters.getJSONArray("genres").getString(0).equals("Sci-Fi")&&filters.getString("season").equals("FALL")&&filters.getInt("year")==2026&&filters.getJSONArray("sort").getString(0).equals("TITLE_ROMAJI"),"Discovery filters must preserve genre/year/sort semantics");checks++;
+        check(NativeDiscovery.lowerBound(2,50,true)==101&&NativeDiscovery.lowerBound(3,7,false)==107,"Paging must use hasNextPage instead of inaccurate provider totals");checks++;
+        try{NativeDiscovery.variables(android.net.Uri.parse("https://local/browse?categories=unknown"));throw new AssertionError("Unknown genres must fail");}catch(BackendBridge.HttpFailure expected){check(expected.status==400,"Invalid category status");checks++;}
+        JSONObject enriched=new JSONObject(title.toString());enriched.getJSONArray("episodeList").getJSONObject(0).put("thumbnail",JSONObject.NULL).put("title",JSONObject.NULL);
+        NativeMetadata.mergeEpisodes(enriched,new JSONObject().put("1",new JSONObject().put("image","https://example.invalid/episode1.jpg").put("title",new JSONObject().put("en","A real episode title")).put("overview","Episode overview")));
+        JSONObject enrichedEpisode=NativeCatalog.episode(enriched,enriched.getJSONArray("episodeList").getJSONObject(0));
+        check(enrichedEpisode.getString("title").equals("A real episode title")&&enrichedEpisode.getJSONObject("images").getJSONArray("thumbnail").getJSONArray(0).getJSONObject(0).getString("source").endsWith("episode1.jpg")&&enrichedEpisode.getJSONArray("versions").length()==2,"Episode metadata enrichment must retain source audio availability");checks++;
+        JSONObject skip=NativePlayback.mapSkipEvents("ANI21E1",new JSONObject().put("intro",new JSONObject().put("start",31).put("end",111)).put("outro",new JSONObject().put("start",1376).put("end",1447)));
+        Object skips=decode("com.ellation.crunchyroll.api.etp.playback.model.SkipEvents",skip);
+        check(((Number)call(call(skips,"getIntro"),"getEndSeconds")).doubleValue()==111&&call(call(skips,"getCredits"),"getType").toString().equals("CREDITS"),"Native skip events must use provider timestamps and original enums");checks++;
+        check(!NativePlayback.mapSkipEvents("ANI21E1",new JSONObject().put("intro",new JSONObject().put("start",10).put("end",10))).has("intro"),"Empty or invalid skip ranges must not produce controls");checks++;
+        check(NativeAssets.avatar("ani-cover-21").endsWith("anilistId=21")&&NativeAssets.avatar("default.png").startsWith("https://ani.pm/")&&NativeAssets.avatar("https://user:password@example.invalid")==null,"Native asset URL mapping must only accept own catalog IDs");checks++;
+        JSONObject nullable=new JSONObject().put("id",99).put("title",new JSONObject().put("english",JSONObject.NULL).put("romaji","Localized title")).put("description",JSONObject.NULL).put("coverImage",new JSONObject().put("large","https://example.invalid/cover.jpg"));
+        check(NativeDiscovery.record(nullable).getString("title").equals("Localized title")&&NativeDiscovery.record(nullable).getString("synopsis").isEmpty(),"JSON null metadata must never render the literal null");checks++;
+        JSONObject commentResponse=NativeCommunity.normalizeDates(new JSONObject().put("items",new org.json.JSONArray().put(new JSONObject().put("comment_id","123456").put("created","2026-10-05T12:26:58.718602+00:00").put("modified","2026-10-05T14:26:58.718602+02:00"))));
+        Object datedComment=decodeComment(commentResponse.getJSONArray("items").getJSONObject(0));
+        check(call(datedComment,"getCreated").equals(call(datedComment,"getModified")),"Cloud comment dates must parse in the original Gson adapter without a crash");checks++;
+        check(Long.parseLong(call(datedComment,"getId").toString())==123456,"Original comment RecyclerView requires numeric stable IDs, not database UUIDs");checks++;
+        check(NativeSubtitles.locale(new JSONObject().put("language","es").put("label","Spanish")).equals("es-ES"),"Spanish native locale mapping");checks++;
+        check(NativeSubtitles.locale(new JSONObject().put("language","und").put("label","Spanish (- Spanish(Latin America))")).equals("es-419"),"Latin American Spanish must not collapse into Spain");checks++;
+        check(NativeSubtitles.locale(new JSONObject().put("language","und").put("label","Portuguese (- Portuguese(Brazil))")).equals("pt-BR")&&NativeSubtitles.locale(new JSONObject().put("language","und").put("label","Russian")).equals("ru-RU")&&NativeSubtitles.locale(new JSONObject().put("language","und").put("label","Unknown")).isEmpty(),"Label fallback must preserve supported languages and reject unknown tracks");checks++;
+        String ass=NativeSubtitles.toAss("WEBVTT\n\nintro\n00:01.250 --> 00:04.590 align:center\nHola, <b>mundo</b>!\nSecond line\n\n01:01:02.000 --> 01:01:03.000\nEspañol\n");
+        check(ass.contains("Dialogue: 0,0:00:01.25,0:00:04.59,Default,,0,0,0,,Hola, mundo!\\NSecond line")&&ass.contains("1:01:02.00,1:01:03.00"),"WebVTT conversion must preserve cue timing, Unicode and line breaks");checks++;
+        try{NativeSubtitles.toAss("<html>upstream error</html>");throw new AssertionError("HTML must not be accepted as subtitles");}catch(java.io.IOException expected){}checks++;
+        check(!NativeSubtitles.toAss("WEBVTT\n\n00:01.000 --> 00:02.000\n{\\pos(1,2)}Text\n").contains("{\\pos"),"Subtitle data must not inject ASS overrides");checks++;
+        check(NativePlayback.hardLocale(new JSONObject().put("hardsub_locale","es-419")).equals("es-419")&&NativePlayback.hardLocale(new JSONObject().put("type","sub")).isEmpty(),"Sub audio alone is not proof of burned-in subtitles");checks++;
+        JSONObject spanishStreams=NativePlayback.streamJson("ANI154587E1","https://example.invalid/master.m3u8","sub",new org.json.JSONArray().put(new JSONObject().put("format","vtt").put("language","es").put("file","https://example.invalid/es.vtt")).put(new JSONObject().put("format","vtt").put("language","und").put("label","Spanish (Latin America)").put("file","https://example.invalid/latam.vtt")));
+        Object spanishPlayer=NativePlayback.mapHls("ANI154587E1",decode("com.ellation.crunchyroll.api.cms.model.streams.Streams",spanishStreams),null,"");
+        check(((java.util.List<?>)call(spanishPlayer,"f")).size()==2&&spanishStreams.getJSONObject("subtitles").getJSONObject("es-419").getString("url").startsWith("https://appassets.androidplatform.net/apkforge-subtitles/"),"Separate Spanish tracks must reach the original player through its local ASS renderer");checks++;
         System.out.println("Native model contracts passed: "+checks);
+        for(String arg:args)if(arg.equals("--catalog-live")){
+            JSONObject one=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=0&n=25")),two=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=25&n=25"));
+            java.util.HashSet<String> ids=new java.util.HashSet<>();for(int i=0;i<one.getJSONArray("data").length();i++)ids.add(one.getJSONArray("data").getJSONObject(i).getString("id"));
+            for(int i=0;i<two.getJSONArray("data").length();i++)check(ids.add(two.getJSONArray("data").getJSONObject(i).getString("id")),"Catalog pages repeat title IDs");
+            check(one.getJSONArray("data").length()==25&&two.getJSONArray("data").length()==25,"Catalog page lengths");
+            cached.remove(154587);JSONObject detail=BackendBridge.series(154587);NativePlayback.publicHttps(NativeMetadata.string(detail.getJSONArray("episodeList").getJSONObject(0),"thumbnail"));
+            JSONObject ranges=NativePlayback.skipEvents("ANI21E1");check(ranges.has("intro"),"Live intro metadata");
+            System.out.println("Live hybrid catalog passed: disjoint pages, episode image, intro metadata");
+        }
         for(String arg:args)if(arg.equals("--stream-live")){
             JSONObject live=NativePlayback.resolve("ANI21E1");
             check(NativePlayback.mapHls("ANI21E1",decode("com.ellation.crunchyroll.api.cms.model.streams.Streams",live),null,"")!=null,"Live provider must map into original player");
             System.out.println("Live HLS resolver passed: One Piece episode 1 sub (manifest and model only)");
+        }
+        for(String arg:args)if(arg.equals("--subtitles-live")){
+            JSONObject bundle=new JSONObject(NativePlayback.get("https://anivexaapi-aniko2.hf.space/api/watch/154587/sub/1",null)).getJSONObject("ssub");
+            org.json.JSONArray tracks=bundle.getJSONArray("subtitles");java.util.HashSet<String> verified=new java.util.HashSet<>();
+            for(int i=0;i<tracks.length();i++){JSONObject track=tracks.getJSONObject(i);String language=NativeSubtitles.locale(track);if(language.equals("es-ES")||language.equals("es-419")||language.equals("en-US")){String converted=NativeSubtitles.toAss(NativePlayback.get(track.getString("file"),NativePlayback.REFERER));check(converted.contains("Dialogue: 0,"),"Subtitle conversion must produce timed cues");verified.add(language);}}
+            check(verified.contains("es-ES")&&verified.contains("es-419")&&verified.contains("en-US"),"Live Spanish variants and English tracks required for this fixture");
+            System.out.println("Live subtitles passed: Frieren episode 1 English, Spanish and Latin American Spanish fetched and converted to ASS");
         }
         if(args.length>0&&args[0].equals("--cloud-negative")){
             try{CloudSession.signIn("native-contract@example.invalid","invalid-contract-password");throw new AssertionError("Unknown cloud user must not authenticate");}

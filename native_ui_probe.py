@@ -16,11 +16,12 @@ def main():
     p.add_argument('--expected-avd', default='APKForge_Original_UI')
     p.add_argument('--text')
     p.add_argument('--description')
+    p.add_argument('--resource', help='One visible native resource-id')
     p.add_argument('--type-text', help='ASCII fixture text for one visible non-password input')
     p.add_argument('--output', type=Path)
     args = p.parse_args()
-    if args.text is not None and args.description is not None:
-        p.error('Choose either text or description')
+    if sum(value is not None for value in (args.text,args.description,args.resource)) > 1:
+        p.error('Choose one text, description or resource-id')
     if not args.serial.startswith('emulator-'):
         p.error('An isolated emulator is required')
 
@@ -38,13 +39,17 @@ def main():
             raise RuntimeError('UI snapshot failed; refusing to use a stale tree')
         xml = adb('exec-out', 'cat', path)
         tree = ET.fromstring(xml)
+        for node in tree.iter('node'):
+            if node.get('password') == 'true':
+                node.set('text', '[password hidden]')
+                node.set('content-desc', '')
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(xml, encoding='utf-8')
+            args.output.write_text(ET.tostring(tree, encoding='unicode'), encoding='utf-8')
         return tree
 
     tree = snapshot()
-    attr, value = ('text', args.text) if args.text is not None else ('content-desc', args.description)
+    attr, value = ('text', args.text) if args.text is not None else ('resource-id', args.resource) if args.resource is not None else ('content-desc', args.description)
     if value is not None:
         parents = {child: parent for parent in tree.iter() for child in parent}
         targets = {}
@@ -80,6 +85,8 @@ def main():
         tree=snapshot()
     for node in tree.iter('node'):
         text, desc = node.get('text', ''), node.get('content-desc', '')
+        if node.get('password') == 'true':
+            text = '[password hidden]'
         if text or desc:
             print(text[:100], desc[:100], node.get('bounds'))
 

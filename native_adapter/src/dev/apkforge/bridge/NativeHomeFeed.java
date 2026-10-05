@@ -19,11 +19,23 @@ final class NativeHomeFeed {
         {"movies","Anime Movies","range=all&format=MOVIE"},
         {"action","Action","range=all&genre=Action"},
         {"adventure","Adventure","range=all&genre=Adventure"},
-        {"fantasy","Fantasy","range=all&genre=Fantasy"}
+        {"fantasy","Fantasy","range=all&genre=Fantasy"},
+        {"airing","Currently Airing",""},
+        {"season","New This Season",""}
     };
     static String query(String id)throws BackendBridge.HttpFailure {
         for(String[] c:COLLECTIONS)if(c[0].equals(id))return "/top?"+c[2]+"&adult=0&limit=100";
         throw new BackendBridge.HttpFailure(404,"collection-not-found");
+    }
+    static String seasonalQuery(String id)throws BackendBridge.HttpFailure {
+        if("current".equals(id))return "/top?range=today&adult=0&limit=100";
+        throw new BackendBridge.HttpFailure(404,"seasonal-tag-not-found");
+    }
+    static JSONObject seasonalTags()throws Exception {
+        // The provider exposes live airing state, not a reliable historical calendar.
+        JSONArray data=new JSONArray().put(new JSONObject().put("id","current")
+            .put("localization",new JSONObject().put("title","Currently Airing")));
+        return BackendBridge.envelope(data);
     }
     static JSONObject collection(String id,String title,JSONArray records)throws Exception {
         JSONArray ids=new JSONArray();LinkedHashSet<Integer> unique=new LinkedHashSet<>();
@@ -53,7 +65,7 @@ final class NativeHomeFeed {
         ExecutorService pool=Executors.newFixedThreadPool(4);
         List<Future<JSONArray>> tasks=new ArrayList<>();
         try{
-            for(String[] c:COLLECTIONS){final String id=c[0];tasks.add(pool.submit(()->BackendBridge.api(query(id).replace("limit=100","limit=20")).getJSONArray("data")));}
+            for(String[] c:COLLECTIONS){final String id=c[0];tasks.add(pool.submit(()->id.equals("airing")||id.equals("season")?NativeDiscovery.feed(id):BackendBridge.api(query(id).replace("limit=100","limit=20")).getJSONArray("data")));}
             JSONArray feed=new JSONArray();
             for(int i=0;i<COLLECTIONS.length;i++){
                 JSONArray records;

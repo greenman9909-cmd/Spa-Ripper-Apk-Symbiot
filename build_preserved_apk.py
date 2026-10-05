@@ -20,8 +20,8 @@ from android_formats import ANDROID, decode_manifest, strings_pool
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_SHA256 = '9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1'
-BUILD_VERSION = '0.4.5'
-BUILD_CODE = 1000045
+BUILD_VERSION = '0.4.6'
+BUILD_CODE = 1000046
 
 
 def sha(data):
@@ -119,6 +119,8 @@ def main():
         ('cr/l.smali', 'replacement HLS stream resolver in original player backend'),
         ('cr/g.smali', 'HLS mapping into original native player models'),
         ('ll/a.smali', 'provider headers on original media data source'),
+        ('do/b.smali', 'replacement avatar and wallpaper URL mapping in original picker'),
+        ('gk/b.smali', 'WebVTT conversion for the retained local subtitle renderer'),
     ]
     for relative, reason in paths:
         path = copied[relative]
@@ -144,6 +146,31 @@ def main():
     check-cast v0, Lbl/c;
     return-object v0
     :apkforge_original_mapper''')
+        elif relative == 'gk/b.smali':
+            anchor = '.method public final shouldInterceptRequest(Landroid/webkit/WebView;Landroid/webkit/WebResourceRequest;)Landroid/webkit/WebResourceResponse;\n    .locals 6'
+            if text.count(anchor) != 1: raise ValueError('Original subtitle request callback does not match recipe')
+            text = text.replace(anchor, anchor + '''
+    invoke-static {p2}, Ldev/apkforge/bridge/NativeSubtitles;->intercept(Landroid/webkit/WebResourceRequest;)Landroid/webkit/WebResourceResponse;
+    move-result-object v0
+    if-eqz v0, :apkforge_original_subtitle_asset
+    return-object v0
+    :apkforge_original_subtitle_asset''')
+        elif relative == 'do/b.smali':
+            for method, callback, locals_count in [
+                ('public final a(Ljava/lang/String;FLk0/j;I)Ljava/lang/String;', 'avatar', 5),
+                ('public final b(Ljava/lang/String;FFLk0/j;I)Ljava/lang/String;', 'wallpaper', 5),
+            ]:
+                start=text.index('.method '+method); end=text.index('.end method',start)
+                section=text[start:end]
+                anchor=f'    .locals {locals_count}'
+                if section.count(anchor)!=1: raise ValueError('Original asset URL mapper does not match recipe')
+                section=section.replace(anchor,anchor+f'''
+    invoke-static {{p1}}, Ldev/apkforge/bridge/NativeAssets;->{callback}(Ljava/lang/String;)Ljava/lang/String;
+    move-result-object v0
+    if-eqz v0, :apkforge_original_asset
+    return-object v0
+    :apkforge_original_asset''')
+                text=text[:start]+section+text[end:]
         elif relative == 'll/a.smali':
             anchor = '    iput-object v2, v0, Lll/a;->h:Lk5/f$a;'
             if text.count(anchor) != 1: raise ValueError('Original media factory does not match recipe')
@@ -213,7 +240,7 @@ def main():
               'versionName': BUILD_VERSION, 'versionCode': BUILD_CODE,
               'manifestChanges': ['Root versionName/versionCode only; decoded manifest otherwise identical'],
               'originalUiCodeChanged': False, 'runtimeVerified': False,
-              'migrationComplete': False, 'limitations': ['Native API adapter is incomplete', 'Playback and account/profile APIs still require integration', 'Local signing key differs from official app']}
+              'migrationComplete': False, 'limitations': ['Native API adapter is incomplete', 'Provider availability and subtitle language coverage vary by episode', 'Cloud restore and conflict-aware multi-device sync require further verification', 'Local signing key differs from official app']}
     result.with_suffix('.provenance.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(f'Original-code test build: {result}')
     print('Retained every original UI resource and all original screen implementations. Backend migration is incomplete.')

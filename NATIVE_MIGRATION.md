@@ -1,5 +1,7 @@
 # Original-screen Android migration — experimental
 
+**Current status (0.4.6):** [AGENT_HANDOFF.md](AGENT_HANDOFF.md) supersedes the historical behavior/verification below. Eight integration hooks now support hybrid paged discovery, episode artwork, real skip metadata, avatar selection, cloud comments and WebVTT-to-ASS conversion for the retained subtitle renderer. Spanish dialogue was verified in the native player; native Supabase login/persistence/avatar backup and comment reply/like/delete were exercised. Current tests: 44 Python / 58 original model contracts. Fresh-device restore, multi-device conflict handling and full production acceptance remain incomplete.
+
 This is an incomplete backend migration of the user-supplied Android 3.61.0 / 770 APK. The earlier reconstructed interface was rejected and is not included. The recipe keeps original manifest semantics except root version attributes, resource table, assets, native libraries and screen implementations, with six original backend/player integration classes hooked and a new adapter DEX appended. Read [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for the current continuation plan.
 
 The supplied APK SHA-256 is `9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1`. This recipe deliberately rejects other inputs. APK filenames are not package identity: `server.py --inspect INPUT.apk --expected-package com.crunchyroll.crunchyroid` checks the decoded manifest.

@@ -60,6 +60,21 @@ final class CloudSession {
         JSONObject value=new JSONObject(request("/auth/v1/token?grant_type=password","POST",new JSONObject().put("email",email.trim()).put("password",password),null));
         validate(value);save(value);
     }
+    static synchronized void signUp(JSONObject body)throws Exception {
+        String email=body.optString("email","").trim(),password=body.optString("password","");
+        if(!email.contains("@")||password.length()<8)throw new BackendBridge.HttpFailure(400,"invalid-signup-fields");
+        JSONObject response=new JSONObject(request("/auth/v1/signup","POST",new JSONObject().put("email",email).put("password",password),null));
+        // Confirmation-enabled projects return a user without a session.
+        if(!response.optString("access_token","").isEmpty()){validate(response);save(response);}
+    }
+    static void recover(String email)throws Exception {
+        if(email==null||!email.contains("@"))throw new BackendBridge.HttpFailure(400,"invalid-email");
+        request("/auth/v1/recover","POST",new JSONObject().put("email",email.trim()),null);
+    }
+    static String rest(String path,String method,JSONObject body,boolean authenticated)throws Exception {
+        if(!path.startsWith("/rest/v1/"))throw new IllegalArgumentException("Invalid REST path");
+        return request(path,method,body,authenticated?token():null);
+    }
     private static void validate(JSONObject value)throws Exception {
         JSONObject user=value.optJSONObject("user");
         if(value.optString("access_token").isEmpty()||value.optString("refresh_token").isEmpty()||user==null||!user.optString("id").matches("[0-9a-fA-F-]{36}"))throw new IOException("Invalid cloud session response");
@@ -91,7 +106,7 @@ final class CloudSession {
         connection.setConnectTimeout(15000);connection.setReadTimeout(20000);connection.setRequestMethod(method);
         connection.setRequestProperty("apikey",PUBLIC_KEY);connection.setRequestProperty("Accept","application/json");
         if(token!=null)connection.setRequestProperty("Authorization","Bearer "+token);
-        if(path.startsWith("/rest/"))connection.setRequestProperty("Prefer","resolution=merge-duplicates,return=minimal");
+        if(path.startsWith("/rest/"))connection.setRequestProperty("Prefer",path.contains("/account_state")?"resolution=merge-duplicates,return=minimal":path.contains("/app_comment_votes")?"resolution=ignore-duplicates,return=representation":"return=representation");
         try{
             if(body!=null){byte[] bytes=body.toString().getBytes(StandardCharsets.UTF_8);connection.setDoOutput(true);connection.setRequestProperty("Content-Type","application/json");connection.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=connection.getOutputStream()){out.write(bytes);}}
             int status=connection.getResponseCode();
