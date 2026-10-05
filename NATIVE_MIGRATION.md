@@ -1,6 +1,6 @@
 # Original-screen Android migration — experimental
 
-This is an incomplete backend migration of the user-supplied Android 3.61.0 / 770 APK. The earlier reconstructed interface was rejected and is not included. The recipe keeps the original manifest, resource table, assets, native libraries and screen implementations, with three original backend classes patched and a new adapter DEX appended.
+This is an incomplete backend migration of the user-supplied Android 3.61.0 / 770 APK. The earlier reconstructed interface was rejected and is not included. The recipe keeps the original manifest, resource table, assets, native libraries and screen implementations, with six original backend/player integration classes hooked and a new adapter DEX appended.
 
 The supplied APK SHA-256 is `9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1`. This recipe deliberately rejects other inputs. APK filenames are not package identity: `server.py --inspect INPUT.apk --expected-package com.crunchyroll.crunchyroid` checks the decoded manifest.
 
@@ -15,7 +15,9 @@ The supplied APK SHA-256 is `9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00
 - The adapter sits after the original request/response interceptors so their account-ID rewriting and response processing are retained. The original native play-service hostname is handled explicitly as well as the catalog hosts.
 - Episode ratings use the original thumbs-up/down model instead of the series five-star model. Community reads return empty replacement guestbooks/comments; community writes fail explicitly. Episode skip metadata contains no invented intro/credits times.
 
-**Playback is unfinished.** ani.pm's public API provides embed playback, not a documented HLS/DASH URL for the retained native player. Attempts to start playback currently reach the original connection-error screen and repeatedly reload metadata before a play-service request is observed. The corrected episode progression/audio-version/stream-link contracts have not resolved this runtime failure. This APK does not claim ad-free native playback. Complete genre/simulcast browsing, avatars, music, store, downloads and other original service functions are also unfinished. Language synchronization currently falls back to bundled resources. A signed APK is not evidence of a complete or stable product.
+**Native HLS now plays in the original Android player.** ani.pm remains the catalog provider; its public playback API exposes embeds. The alternate Anivexa watch endpoint returns MegaPlay embed links rather than direct streams. The adapter follows those links using their reference header, reads a numeric source ID and resolves the public sources response without executing player/ad scripts. The currently observed `enc` response uses the public player's AES-CBC URL-wrapper format (a UTF-8 key zero-padded to 32 bytes, 16-byte IV and PKCS padding). This is source-response decoding, not media DRM/license decryption. HLS is mapped into the retained HLS player models, with provider headers on the media data-source factory and bounded background workers preserving Kotlin suspension.
+
+Missing native availability dates were also corrected: provider-available audio uses a fixed adapter access-date anchor, not an invented broadcast date. Missing dates made the original availability monitor reload metadata and prevented stream requests. One Piece episode 1 sub now plays; pause, ten-second seek and landscape fullscreen were exercised on the isolated emulator. This is not verification of every title, audio version or subtitle selection. Provider availability, quality and uptime remain external dependencies. Complete genre/simulcast browsing, avatars, music, store, downloads and other original service functions are unfinished. Language synchronization currently falls back to bundled resources. A signed APK is not evidence of a complete or stable product.
 
 On 2026-10-05, the user selected pausing WebLoom to preserve its data and free the project slot. WebLoom is now INACTIVE. Spa-Ripper-AniPM (`yhccrdatocqqniblpshm`) was created in the agreed organization, eu-west-3, at the confirmed cost of 0/month. No project was deleted or upgraded.
 
@@ -49,7 +51,16 @@ The repository contains the adapter and build recipe. Original decoded sources, 
 - Original My Lists opens without the former unmapped custom-lists/history crash. The original custom-list form creates `Native Test`, displays its empty detail and returns it in the collection. The list persists across APK updates; switching to another original profile shows separate empty lists/watchlist.
 - Original Account displays the original profile header, Switch Profile and viewing-preference controls. Original watchlist displays Bleach and its S1 E1 entry after correcting its episode metadata.
 - Native Home loads additional provider carousels. The replacement account initializes the original pending-state observer: the blank email banner disappears for Guest without changing its layout or presenter.
-- Native playback remains unverified and fails as described above. Model-contract tests do not establish working playback, complete navigation or visual fidelity for every screen.
+- The earlier playback failure described in release 0.4.2 is superseded by the native HLS checks below. Model-contract tests alone do not establish working playback, complete navigation or visual fidelity for every screen.
+
+## Native HLS verification on 2026-10-05 (0.4.3)
+
+- 43 Python tests and 34 original Android model contracts pass. Additional contracts cover the original availability gate, HLS URL/protocol/subtitle mapping, absence of synthetic DRM/session tokens, non-HLS mapper fallback, a fixed provider-decryption compatibility vector and invalid source URL rejection.
+- `python verify_native_contracts.py --stream-live` validated a live One Piece episode 1 HLS manifest and original player model on Android. Actual UI testing subsequently showed decoded video frames, progress from 0:00 to 1:11, pause, seeking to 1:21 and fullscreen with the original controls and preserved aspect ratio. No browser was launched in the tested playback flow.
+- The signed output preserves 4,666 original non-signature archive members; original primary/framework DEX files and all resources remain byte-identical. Player integration hooks are listed individually in the provenance report. Temporary diagnostic hooks were removed before release.
+- Supabase configuration/RLS is retained from 0.4.2; successful native login and cloud restore remain unverified. No credentials or backend from the reference Yoru app were imported.
+
+Observed provider protocol references: [Anivexa watch response](https://anivexaapi-aniko2.hf.space/api/watch/21/sub/1), [MegaPlay public player client](https://megaplay.buzz/lib/app.main.js), and [ani.pm developers](https://ani.pm/developers). These third-party endpoints can change; no signed media URLs are committed.
 
 The native migration is not considered complete. Release notes report the validated flows and remaining limitations rather than a fidelity or accuracy percentage.
 

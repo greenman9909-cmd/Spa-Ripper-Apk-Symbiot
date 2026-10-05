@@ -64,6 +64,9 @@ def main():
         ('s70/e.smali', 'inactive-client monitor'),
         ('com/ellation/crunchyroll/api/etp/OkHttpClientFactory.smali', 'backend adapter install'),
         ('com/ellation/crunchyroll/api/etp/auth/SharedPreferencesTokenStorage.smali', 'optional local guest session for replacement backend'),
+        ('cr/l.smali', 'replacement HLS stream resolver in original player backend'),
+        ('cr/g.smali', 'HLS mapping into original native player models'),
+        ('ll/a.smali', 'provider headers on original media data source'),
     ]
     for relative, reason in paths:
         path = copied[relative]
@@ -73,6 +76,26 @@ def main():
         elif relative.endswith('SharedPreferencesTokenStorage.smali'):
             text = replace_method(text, 'public getRefreshToken()Ljava/lang/String;', '    .locals 1\n    const-string v0, "apkforge-local-guest"\n    return-object v0')
             text = replace_method(text, 'public isPresent()Z', '    .locals 1\n    const/4 v0, 0x1\n    return v0')
+        elif relative == 'cr/l.smali':
+            text = replace_method(text, 'public final k(Lcom/ellation/crunchyroll/model/PlayableAsset;ZLzc0/d;)Ljava/io/Serializable;', '''    .locals 1
+    invoke-static {p1, p3}, Ldev/apkforge/bridge/NativePlayback;->streamsAsync(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
+    move-result-object v0
+    check-cast v0, Ljava/io/Serializable;
+    return-object v0''')
+        elif relative == 'cr/g.smali':
+            anchor = '.method public final a(Ljava/lang/String;Lcom/ellation/crunchyroll/api/cms/model/streams/Streams;Ljg/d;Ljava/lang/String;)Lbl/c;\n    .locals 14'
+            if text.count(anchor) != 1: raise ValueError('Original streams mapper does not match recipe')
+            text = text.replace(anchor, anchor + '''
+    invoke-static/range {p1 .. p4}, Ldev/apkforge/bridge/NativePlayback;->mapHls(Ljava/lang/String;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/Object;
+    move-result-object v0
+    if-eqz v0, :apkforge_original_mapper
+    check-cast v0, Lbl/c;
+    return-object v0
+    :apkforge_original_mapper''')
+        elif relative == 'll/a.smali':
+            anchor = '    iput-object v2, v0, Lll/a;->h:Lk5/f$a;'
+            if text.count(anchor) != 1: raise ValueError('Original media factory does not match recipe')
+            text = text.replace(anchor, '    invoke-static {v2}, Ldev/apkforge/bridge/NativePlayback;->configureMediaFactory(Ljava/lang/Object;)V\n\n' + anchor)
         else:
             anchor = '.method private final varargs addInterceptors(Lme0/y$a;[Lme0/u;)Lme0/y$a;\n    .locals 4'
             if text.count(anchor) != 1: raise ValueError('Original network builder does not match recipe')

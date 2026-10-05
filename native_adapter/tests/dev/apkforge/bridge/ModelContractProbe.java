@@ -82,7 +82,29 @@ public final class ModelContractProbe {
         check(call(watchlistPanel,"getStreamHref").equals("/apkforge/playback/ANI154587E1"),"A playable native Panel must retain its stream link");checks++;
         Object onlyDub=decode("com.ellation.crunchyroll.model.Episode",NativeCatalog.episode(title,new JSONObject(providerEpisode.toString()).put("available",new JSONObject().put("sub",false).put("dub",true))));
         check(call(onlyDub,"getAudioLocale").equals("en-US")&&call(onlyDub,"getId").equals("ANI154587E1D"),"Dub-only episodes must not advertise an unavailable Japanese asset");checks++;
+        Class<?> premiumFlag=Class.forName("id0.a");
+        Object guestFlag=java.lang.reflect.Proxy.newProxyInstance(premiumFlag.getClassLoader(),new Class<?>[]{premiumFlag},(self,method,arguments)->Boolean.FALSE);
+        Object availability=Class.forName("ov.c").getConstructor(premiumFlag).newInstance(guestFlag);
+        check(availability.getClass().getMethod("a",Class.forName("com.ellation.crunchyroll.model.PlayableAsset")).invoke(availability,episodeModel).equals("available"),"Provider-available episode must pass original date-based availability contract");checks++;
+        JSONObject hlsJson=NativePlayback.streamJson("ANI21E1","https://example.invalid/master.m3u8","sub",
+            new org.json.JSONArray().put(new JSONObject().put("format","vtt").put("language","en").put("file","https://example.invalid/en.vtt")));
+        Object hls=decode("com.ellation.crunchyroll.api.cms.model.streams.Streams",hlsJson);
+        Object nativePlayer=NativePlayback.mapHls("ANI21E1",hls,null,"");
+        check(nativePlayer!=null&&nativePlayer.getClass().getField("d").get(nativePlayer).toString().equals("HLS"),"Original player must select HLS rather than DASH");
+        check(nativePlayer.getClass().getField("e").get(nativePlayer).equals("https://example.invalid/master.m3u8")&&((java.util.List<?>)call(nativePlayer,"f")).size()==1,"Original URL and external subtitle mapping");
+        check(nativePlayer.getClass().getField("g").get(nativePlayer)==null&&nativePlayer.getClass().getField("j").get(nativePlayer)==null,"Public HLS must not synthesize DRM tokens or licensed sessions");checks++;
+        JSONObject emptyHls=new JSONObject(hlsJson.toString()).put("streams",new JSONObject());
+        check(NativePlayback.mapHls("ANI21E1",decode("com.ellation.crunchyroll.api.cms.model.streams.Streams",emptyHls),null,"")==null,"Non-HLS streams retain original mapper");checks++;
+        check(NativePlayback.decodeSources("wdeBruh3qqn_i5wUNnyaPYD8arCx-VSkn9ax1dWdZbr5zTx8zxHC6TDwg54JqrA1").getString("file").equals("https://example.invalid/master.m3u8"),"Public provider AES-256 zero-padded-key compatibility fixture");checks++;
+        for(String unsafe:new String[]{"http://example.invalid/a","https://127.0.0.1/a","https://user:password@example.invalid/a","file:///a"}){
+            try{NativePlayback.publicHttps(unsafe);throw new AssertionError("Invalid source URL accepted");}catch(java.io.IOException expected){}
+        }checks++;
         System.out.println("Native model contracts passed: "+checks);
+        for(String arg:args)if(arg.equals("--stream-live")){
+            JSONObject live=NativePlayback.resolve("ANI21E1");
+            check(NativePlayback.mapHls("ANI21E1",decode("com.ellation.crunchyroll.api.cms.model.streams.Streams",live),null,"")!=null,"Live provider must map into original player");
+            System.out.println("Live HLS resolver passed: One Piece episode 1 sub (manifest and model only)");
+        }
         if(args.length>0&&args[0].equals("--cloud-negative")){
             try{CloudSession.signIn("native-contract@example.invalid","invalid-contract-password");throw new AssertionError("Unknown cloud user must not authenticate");}
             catch(BackendBridge.HttpFailure expected){check(expected.status==400||expected.status==401,"Auth must reject invalid credentials");}

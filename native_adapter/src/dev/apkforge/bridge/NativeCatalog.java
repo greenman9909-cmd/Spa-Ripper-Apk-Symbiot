@@ -73,6 +73,11 @@ final class NativeCatalog {
             .put("season_title",title.optString("title")).put("season_number","1").put("season_display_number","1")
             .put("episode",String.valueOf(n)).put("episode_number",String.valueOf(n)).put("duration_ms",episode.optLong("runtimeSeconds")*1000)
             .put("is_subbed",available.optBoolean("sub")).put("is_dubbed",available.optBoolean("dub")).put("is_premium_only",false)
+            // Provider marks this audio available now. These are adapter access
+            // dates, not invented broadcast dates. Missing dates make the
+            // retained availability monitor continually reload the episode.
+            .put("available_date","1970-01-01T00:00:00Z").put("free_available_date","1970-01-01T00:00:00Z")
+            .put("premium_available_date","1970-01-01T00:00:00Z")
             .put("media_type","episode").put("channel_id","crunchyroll").put("audio_locale",dubbed?"en-US":"ja-JP")
             .put("subtitle_locales",new JSONArray().put("en-US")).put("versions",versions).put("available_offline",false)
             .put("maturity_ratings",new JSONArray()).put("tenant_categories",new JSONArray())

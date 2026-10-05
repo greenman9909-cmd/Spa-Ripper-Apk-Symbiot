@@ -95,7 +95,7 @@ public final class BackendBridge {
         if(path.startsWith("/skip-events/"))return new JSONObject().put("mediaId",path.substring(path.lastIndexOf('/')+1).replace(".json",""));
         if(path.startsWith("/talkbox/guestbooks"))return NativeCommunity.route(uri,(String)request.getClass().getField("b").get(request));
         if(NativeCatalog.handles(path))return NativeCatalog.route(uri);
-        if(path.contains("/apkforge/playback/"))throw new HttpFailure(501,"native-playback-api-unavailable");
+        if(path.contains("/apkforge/playback/"))return NativePlayback.resolve(path.substring(path.lastIndexOf('/')+1));
         if(path.matches("/v1/ANI[0-9]+E[0-9]+D?/android/phone/play"))throw new HttpFailure(501,"native-playback-api-unavailable");
         if(path.startsWith("/content-reviews/")){
             String method=(String)request.getClass().getField("b").get(request);

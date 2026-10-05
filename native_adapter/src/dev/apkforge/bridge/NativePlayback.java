@@ -1,0 +1,169 @@
+package dev.apkforge.bridge;
+
+import android.util.Base64;
+import android.util.Log;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+/** Native HLS adapter. Resolves public provider responses; never runs embed scripts. */
+public final class NativePlayback {
+    static final String UA="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
+    static final String REFERER="https://megaplay.buzz/";
+    private static final ThreadPoolExecutor WORKERS=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(8));
+    private static final Pattern ASSET=Pattern.compile("ANI([0-9]+)E([0-9]+)(D)?");
+    private static final Pattern DATA_ID=Pattern.compile("data-id\\s*=\\s*[\"']([0-9]{1,12})[\"']");
+    private static final LinkedHashMap<String,Cached> CACHE=new LinkedHashMap<String,Cached>(16,.75f,true){
+        protected boolean removeEldestEntry(Map.Entry<String,Cached> e){return size()>16;}
+    };
+    private static final class Cached {final long time=android.os.SystemClock.elapsedRealtime();final String json;Cached(JSONObject j){json=j.toString();}}
+
+    public static Object streams(Object asset)throws IOException {
+        try {
+            String id=(String)asset.getClass().getMethod("getId").invoke(asset);
+            Log.i("APKForgeNative","Resolving native HLS "+id);
+            return model("com.ellation.crunchyroll.api.cms.model.streams.Streams",resolve(id));
+        }catch(IOException e){throw e;}catch(Exception e){throw new IOException("Native stream mapping failed",e);}
+    }
+    /** Retains Kotlin suspension and dispatch, keeping provider I/O off the UI thread. */
+    public static Object streamsAsync(Object asset,Object continuation)throws IOException {
+        try {
+            Class<?> cont=Class.forName("zc0.d");
+            Object dispatched=Class.forName("ad0.b").getMethod("D",cont).invoke(null,continuation);
+            Object safe=Class.forName("zc0.i").getConstructor(cont).newInstance(dispatched);
+            WORKERS.execute(()->{
+                Object result;
+                try{result=streams(asset);}catch(Throwable e){
+                    try{result=Class.forName("vc0.m").getMethod("a",Throwable.class).invoke(null,e);}
+                    catch(Exception unexpected){Log.e("APKForgeNative","Continuation error mapping failed");return;}
+                }
+                try{cont.getMethod("resumeWith",Object.class).invoke(safe,result);}
+                catch(Exception e){Log.e("APKForgeNative","Continuation resume failed");}
+            });
+            return safe.getClass().getMethod("a").invoke(safe);
+        }catch(Exception e){throw new IOException("Native resolver dispatch failed",e);}
+    }
+    static JSONObject resolve(String asset)throws Exception {
+        Matcher m=ASSET.matcher(asset);if(!m.matches())throw new IOException("Unsupported replacement asset");
+        synchronized(CACHE){Cached c=CACHE.get(asset);if(c!=null&&android.os.SystemClock.elapsedRealtime()-c.time<60000)return new JSONObject(c.json);}
+        String audio=m.group(3)==null?"sub":"dub";
+        JSONObject response=new JSONObject(get("https://anivexaapi-aniko2.hf.space/api/watch/"+m.group(1)+"/"+audio+"/"+m.group(2),null));
+        JSONObject bundle=response.optJSONObject(audio.equals("sub")?"ssub":"sdub");
+        if(bundle==null)throw new IOException("Requested audio unavailable");
+        JSONArray candidates=bundle.optJSONArray("streams");if(candidates==null)throw new IOException("No sources");
+        HashSet<String> tried=new HashSet<>();
+        for(int i=0;i<Math.min(candidates.length(),8);i++){
+            JSONObject source=candidates.optJSONObject(i);if(source==null)continue;
+            String embed=source.optString("url");
+            if(!embedHost(embed)||!tried.add(embed))continue;
+            try {
+                Matcher id=DATA_ID.matcher(get(embed,REFERER));if(!id.find())continue;
+                JSONObject sources=new JSONObject(get(REFERER+"stream/getSources?id="+id.group(1),embed));
+                JSONObject decoded=decodeSources(sources.getString("enc"));
+                String file=decoded.getString("file");publicHttps(file);
+                // Reject HTML/error wrappers before passing a URL to the original player.
+                String manifest=get(file,REFERER);if(!manifest.trim().startsWith("#EXTM3U"))continue;
+                JSONObject result=streamJson(asset,file,audio,bundle.optJSONArray("subtitles"));
+                synchronized(CACHE){CACHE.put(asset,new Cached(result));}
+                Log.i("APKForgeNative","HLS manifest verified for "+asset);
+                return result;
+            }catch(Exception e){Log.w("APKForgeNative","Source unavailable: "+e.getClass().getSimpleName());}
+        }
+        throw new IOException("No playable HLS source for requested episode/audio");
+    }
+    static JSONObject decodeSources(String enc)throws Exception {
+        if(enc.length()>131072)throw new IOException("Source payload too large");
+        byte[] key=Arrays.copyOf("i?LMTAx0Q6,:}50U".getBytes(StandardCharsets.UTF_8),32);
+        Cipher cipher=Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new IvParameterSpec("W0;27ToaUpl_P%'c".getBytes(StandardCharsets.UTF_8)));
+        return new JSONObject(new String(cipher.doFinal(Base64.decode(enc,Base64.URL_SAFE|Base64.NO_WRAP)),StandardCharsets.UTF_8));
+    }
+    static JSONObject streamJson(String asset,String file,String audio,JSONArray tracks)throws Exception {
+        JSONObject subtitles=new JSONObject();
+        if(tracks!=null)for(int i=0;i<Math.min(tracks.length(),32);i++){
+            JSONObject t=tracks.optJSONObject(i);if(t==null||!"vtt".equals(t.optString("format")))continue;
+            String url=t.optString("file");try{publicHttps(url);}catch(Exception e){continue;}
+            String lang=t.optString("language");String locale=lang.equals("en")?"en-US":lang;
+            if(!locale.matches("[a-z]{2,3}(?:-[A-Za-z]{2,4})?"))continue;
+            subtitles.put(locale,new JSONObject().put("url",url).put("locale",locale).put("language",locale).put("format","vtt"));
+        }
+        return new JSONObject().put("asset_id",asset).put("media_id",asset).put("audio_locale",audio.equals("dub")?"en-US":"ja-JP")
+            .put("streams",new JSONObject().put("adaptive_hls",new JSONObject().put("",new JSONObject().put("url",file).put("hardsub_locale",""))))
+            .put("subtitles",subtitles).put("captions",new JSONObject()).put("bifs",new JSONArray()).put("playbackType","ON_DEMAND");
+    }
+    static Object model(String cls,JSONObject json)throws Exception {
+        Object gson=Class.forName("com.ellation.crunchyroll.api.GsonHolder").getMethod("getInstance").invoke(null);
+        return gson.getClass().getMethod("fromJson",String.class,Class.class).invoke(gson,json.toString(),Class.forName(cls));
+    }
+    @SuppressWarnings({"unchecked","rawtypes"})
+    public static Object mapHls(String asset,Object streams,Object offline,String params){
+        try {
+            Map<?,?> hls=(Map<?,?>)streams.getClass().getMethod("getHlsStreams").invoke(streams);if(hls==null||hls.isEmpty())return null;
+            Object stream=hls.get("");if(stream==null)stream=hls.values().iterator().next();
+            String url=(String)stream.getClass().getMethod("getUrl").invoke(stream);publicHttps(url);
+            ArrayList<Object> tracks=new ArrayList<>();Map<?,?> subs=(Map<?,?>)streams.getClass().getMethod("getSubtitles").invoke(streams);
+            for(Map.Entry<?,?> entry:subs.entrySet()){
+                String trackUrl=(String)entry.getValue().getClass().getMethod("getUrl").invoke(entry.getValue());publicHttps(trackUrl);
+                tracks.add(Class.forName("bl.d").getConstructor(String.class,String.class).newInstance(entry.getKey().toString(),trackUrl));
+            }
+            Class protocol=Class.forName("bl.b"),type=Class.forName("com.ellation.crunchyroll.api.cms.model.streams.PlaybackType");
+            return Class.forName("bl.c$c").getConstructor(String.class,String.class,protocol,String.class,ArrayList.class,String.class,
+                Class.forName("bl.f"),Class.forName("com.ellation.crunchyroll.api.etp.playback.model.SessionState"),String.class,type,int.class)
+                .newInstance(asset,"",Enum.valueOf(protocol,"HLS"),url,tracks,null,null,null,params,Enum.valueOf(type,"ON_DEMAND"),386);
+        }catch(Exception e){Log.e("APKForgeNative","Native HLS model failure",e);return null;}
+    }
+    /** Only the retained media data-source factory receives provider playback headers. */
+    @SuppressWarnings("unchecked") public static void configureMediaFactory(Object factory){
+        try {
+            if(!factory.getClass().getName().equals("m5.b$a"))throw new IllegalArgumentException("Unexpected media factory");
+            Object properties=factory.getClass().getField("a").get(factory);
+            synchronized(properties){
+                Map<String,String> headers=(Map<String,String>)properties.getClass().getField("a").get(properties);
+                headers.put("Referer",REFERER);headers.put("User-Agent",UA);
+                properties.getClass().getField("b").set(properties,null);
+            }
+        }catch(Exception e){Log.e("APKForgeNative","Media headers unavailable",e);}
+    }
+    private static boolean embedHost(String url){try{URI u=publicHttps(url);return "megaplay.buzz".equals(u.getHost())&&u.getPath().startsWith("/stream/");}catch(Exception e){return false;}}
+    static URI publicHttps(String url)throws Exception {
+        URI u=new URI(url);String h=u.getHost();
+        if(!"https".equals(u.getScheme())||u.getUserInfo()!=null||(u.getPort()!=-1&&u.getPort()!=443)||h==null||h.indexOf('.')<0||h.matches("[0-9.]+")||h.endsWith(".local")||h.endsWith(".localhost")||h.contains(":"))throw new IOException("Invalid public media URL");
+        return u;
+    }
+    private static String get(String url,String referer)throws Exception {
+        // Follow bounded HTTPS redirects with the same non-secret provider headers.
+        for(int redirects=0;redirects<4;redirects++){
+            publicHttps(url);HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();
+            c.setInstanceFollowRedirects(false);c.setConnectTimeout(12000);c.setReadTimeout(12000);c.setRequestProperty("User-Agent",UA);
+            if(referer!=null)c.setRequestProperty("Referer",referer);
+            try {
+                int status=c.getResponseCode();if(status>=300&&status<400){url=new URI(url).resolve(c.getHeaderField("Location")).toString();continue;}
+                if(status!=200)throw new IOException("Provider HTTP "+status);
+                try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+                    byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(out.size()+n>1048576)throw new IOException("Provider response too large");out.write(b,0,n);}
+                    return new String(out.toByteArray(),StandardCharsets.UTF_8);
+                }
+            }finally{c.disconnect();}
+        }throw new IOException("Provider redirect limit");
+    }
+}
