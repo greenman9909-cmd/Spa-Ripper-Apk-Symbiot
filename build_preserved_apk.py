@@ -76,7 +76,13 @@ def main():
         else:
             anchor = '.method private final varargs addInterceptors(Lme0/y$a;[Lme0/u;)Lme0/y$a;\n    .locals 4'
             if text.count(anchor) != 1: raise ValueError('Original network builder does not match recipe')
-            text = text.replace(anchor, anchor + '\n\n    invoke-static {p1}, Ldev/apkforge/bridge/BackendBridge;->install(Ljava/lang/Object;)V')
+            start=text.index(anchor);end=text.index('.end method',start)
+            method=text[start:end]
+            if method.count('    return-object p1')!=1: raise ValueError('Original network builder return does not match recipe')
+            # Keep original authentication, account-state and error interceptors
+            # around replacement responses. An early terminal adapter skips them.
+            method=method.replace('    return-object p1','    invoke-static {p1}, Ldev/apkforge/bridge/BackendBridge;->install(Ljava/lang/Object;)V\n\n    return-object p1')
+            text=text[:start]+method+text[end:]
         path.write_text(text, encoding='utf-8', newline='\n')
         records.append({'class': relative, 'reason': reason, 'originalSmaliSha256': sha(before), 'patchedSmaliSha256': sha(path.read_bytes())})
     jar = ROOT / '.tools/apktool.jar'

@@ -1,0 +1,75 @@
+package dev.apkforge.bridge;
+
+import org.json.JSONObject;
+import java.lang.reflect.Method;
+
+/** Executes against the actual retained model classes, not reimplemented models. */
+public final class ModelContractProbe {
+    private static Object gson;
+    private static Method deserialize;
+    private static Object decode(String name,JSONObject json)throws Exception {
+        return deserialize.invoke(gson,json.toString(),Class.forName(name));
+    }
+    private static Object call(Object value,String method)throws Exception {return value.getClass().getMethod(method).invoke(value);}
+    private static void check(boolean value,String message){if(!value)throw new AssertionError(message);}
+    public static void main(String[] args)throws Exception {
+        gson=Class.forName("com.ellation.crunchyroll.api.GsonHolder").getMethod("getInstance").invoke(null);
+        deserialize=gson.getClass().getMethod("fromJson",String.class,Class.class);
+        int checks=0;
+        for(String rating:new String[]{"","UP","DOWN","NONE"}){
+            Object model=decode("com.ellation.crunchyroll.api.etp.contentreviews.model.episode.EpisodeRatingContainer",NativeRatings.container(true,rating));
+            Object up=call(model,"getUp"),down=call(model,"getDown");
+            check(up!=null&&down!=null,"Episode rating stats must exist for the retained player");
+            check(((Number)call(up,"getRawRatingCount")).intValue()==(rating.equals("UP")?1:0),"Wrong up count");
+            check(((Number)call(down,"getRawRatingCount")).intValue()==(rating.equals("DOWN")?1:0),"Wrong down count");
+            check(call(model,"getUserContentRating").toString().equals(rating.equals("UP")||rating.equals("DOWN")?rating:"NONE"),"Wrong episode rating enum");checks++;
+        }
+        for(String rating:new String[]{"","1s","5s"}){
+            Object model=decode("com.ellation.crunchyroll.api.etp.contentreviews.model.ContentRatingContainer",NativeRatings.container(false,rating));
+            for(String method:new String[]{"getOneStar","getTwoStars","getThreeStars","getFourStars","getFiveStars"})check(call(model,method)!=null,"Missing series stats");
+            check(((Number)call(model,"getAverage")).intValue()==(rating.isEmpty()?0:Integer.parseInt(rating.substring(0,1))),"Wrong series average");checks++;
+        }
+        JSONObject title=new JSONObject().put("anilistId",154587).put("title","Contract fixture").put("poster","https://example.invalid/poster.jpg")
+            .put("episodes",new JSONObject().put("total",28).put("sub",28).put("dub",28));
+        Object panel=decode("com.ellation.crunchyroll.model.Panel",BackendBridge.panel(title));
+        check(call(panel,"getResourceType").toString().equals("series"),"Panel must be navigable by original screen");
+        Object images=call(panel,"getImages");java.util.List<?> wide=(java.util.List<?>)call(images,"getPostersWide");
+        Object image=wide.get(0);check(((Number)call(image,"getWidth")).intValue()==640&&((Number)call(image,"getHeight")).intValue()==360,"Wide hero presentation ratio");checks++;
+        Object book=decode("com.ellation.crunchyroll.api.etp.commenting.model.Guestbook",NativeCommunity.route(android.net.Uri.parse("https://local/talkbox/guestbooks/ANI269E1"),"GET"));
+        check(call(book,"getGuestbookKey").equals("ANI269E1")&&((Number)call(book,"getTotalComments")).intValue()==0,"Empty replacement guestbook contract");checks++;
+        Object comments=decode("com.ellation.crunchyroll.api.etp.commenting.model.CommentPreview",NativeCommunity.route(android.net.Uri.parse("https://local/talkbox/guestbooks/ANI269E1/comments"),"GET"));
+        check(((java.util.List<?>)call(comments,"getComments")).isEmpty()&&((Number)call(comments,"getTotal")).intValue()==0,"Empty replacement comment preview contract");checks++;
+        try{NativeCommunity.route(android.net.Uri.parse("https://local/talkbox/guestbooks/ANI269E1/comments"),"POST");throw new AssertionError("Must not pretend to save comments");}
+        catch(BackendBridge.HttpFailure expected){check(expected.status==501,"Explicit unsupported community write");checks++;}
+        JSONObject lists=new JSONObject();android.net.Uri listsUri=android.net.Uri.parse("https://local/content/v2/local/custom-lists");
+        JSONObject created=NativeLists.route(lists,listsUri,"POST",new JSONObject().put("title","Native contract list"));
+        JSONObject record=created.getJSONArray("data").getJSONObject(0);String listId=record.getString("list_id");
+        Object createdModel=decode("com.ellation.crunchyroll.api.etp.content.model.customlists.CreatedCustomList",record);
+        check(call(createdModel,"getListId").equals(listId)&&call(createdModel,"getModifiedAt")!=null,"Created list date/id contract");checks++;
+        Object listsModel=decode("com.ellation.crunchyroll.api.etp.content.model.customlists.CustomLists",NativeLists.route(lists,listsUri,"GET",new JSONObject()));
+        check(((java.util.List<?>)call(listsModel,"getItems")).size()==1&&((Number)call(call(listsModel,"getMetadata"),"getMaxPrivate")).intValue()==10,"List collection metadata contract");checks++;
+        android.net.Uri listUri=android.net.Uri.parse(listsUri+"/"+listId);
+        NativeLists.route(lists,listUri,"PATCH",new JSONObject().put("title","Renamed"));
+        Object itemsModel=decode("com.ellation.crunchyroll.api.etp.content.model.customlists.CustomListItems",NativeLists.route(lists,listUri,"GET",new JSONObject()));
+        check(((java.util.List<?>)call(itemsModel,"getItems")).isEmpty()&&call(call(itemsModel,"getMetadata"),"getTitle").equals("Renamed"),"Empty list detail and rename contract");checks++;
+        try{NativeLists.route(lists,listsUri,"POST",new JSONObject().put("title"," "));throw new AssertionError("Invalid title must fail");}
+        catch(BackendBridge.HttpFailure expected){check(expected.status==400&&lists.length()==1,"Invalid title must not mutate lists");checks++;}
+        NativeLists.route(lists,listUri,"DELETE",new JSONObject());check(lists.length()==0,"Delete list contract");checks++;
+        JSONObject providerEpisode=new JSONObject().put("number",1).put("runtimeSeconds",1431).put("available",new JSONObject().put("sub",true).put("dub",true));
+        Object episodeModel=decode("com.ellation.crunchyroll.model.Episode",NativeCatalog.episode(title,providerEpisode));
+        check(call(episodeModel,"getOriginalAudio").equals("ja-JP")&&((java.util.List<?>)call(episodeModel,"getVersions")).size()==2,"Selectable audio versions prevent locale reload loop");checks++;
+        title.put("episodeList",new org.json.JSONArray().put(providerEpisode).put(new JSONObject(providerEpisode.toString()).put("number",2)));
+        java.lang.reflect.Field cache=BackendBridge.class.getDeclaredField("titles");cache.setAccessible(true);
+        @SuppressWarnings("unchecked") java.util.Map<Integer,JSONObject> cached=(java.util.Map<Integer,JSONObject>)cache.get(null);cached.put(154587,title);
+        JSONObject next=NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/discover/up_next/ANI154587E1"));
+        check(next.getJSONArray("data").getJSONObject(0).getJSONObject("panel").getString("id").equals("ANI154587E2"),"Next episode must not point back to itself");checks++;
+        check(NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/discover/up_next/ANI154587E2")).getJSONArray("data").length()==0,"End of series must have no next episode");checks++;
+        Object dubbed=decode("com.ellation.crunchyroll.model.Episode",NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/cms/episodes/ANI154587E1D")).getJSONArray("data").getJSONObject(0));
+        check(call(dubbed,"getAudioLocale").equals("en-US")&&call(dubbed,"getId").equals("ANI154587E1D"),"Dubbed asset locale/id must agree");checks++;
+        Object watchlistPanel=decode("com.ellation.crunchyroll.model.Panel",NativeCatalog.watchlistPanel(title));
+        check(call(watchlistPanel,"getResourceType").toString().equals("episode")&&call(call(watchlistPanel,"getPanelMetadata"),"getParentId").equals("ANI154587"),"Watchlist row must expose episode image and series parent");checks++;
+        check(BackendBridge.replacementHost("cr-play-service.prd.crunchyrollsvc.com"),"Native player uses a separate original service hostname");checks++;
+        check(!BackendBridge.replacementHost("crunchyroll.com.example.invalid")&&!BackendBridge.replacementHost(null),"Replacement must not intercept unrelated domains");checks++;
+        System.out.println("Native model contracts passed: "+checks);
+    }
+}

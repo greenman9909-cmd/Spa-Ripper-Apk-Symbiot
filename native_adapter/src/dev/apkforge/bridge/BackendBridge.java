@@ -28,6 +28,10 @@ public final class BackendBridge {
         if(profiles==null)profiles=new LocalProfiles(loader);return profiles;
     }
     private BackendBridge() {}
+    static boolean replacementHost(String host){
+        return host!=null&&(host.equals("crunchyroll.com")||host.endsWith(".crunchyroll.com")
+            ||host.equals("cr-play-service.prd.crunchyrollsvc.com"));
+    }
     public static void install(Object builder) {
         try {
             ClassLoader loader=builder.getClass().getClassLoader();Class<?> interceptor=Class.forName("me0.u",true,loader);
@@ -46,7 +50,7 @@ public final class BackendBridge {
         Object request=chainType.getMethod("request").invoke(chain);
         String address=request.getClass().getField("a").get(request).toString(); Uri uri=Uri.parse(address);
         String host=uri.getHost(),path=uri.getPath();
-        if(host==null||(!host.equals("crunchyroll.com")&&!host.endsWith(".crunchyroll.com"))){
+        if(!replacementHost(host)){
             return chainType.getMethod("e",Class.forName("me0.a0",true,loader)).invoke(chain,request);
         }
         Log.i(TAG,"Catalog request "+path); // No query, headers, cookies or credentials.
@@ -78,19 +82,21 @@ public final class BackendBridge {
         if(path.startsWith("/subs/")&&path.endsWith("/benefits"))return new JSONObject().put("items",new JSONArray().put(new JSONObject().put("benefit","cr_premium").put("source","apkforge-local")));
         // The replacement guest backend offers no subscriptions or purchases.
         if(path.startsWith("/subs/"))return new JSONObject().put("items",new JSONArray());
+        if(path.startsWith("/skip-events/"))return new JSONObject().put("mediaId",path.substring(path.lastIndexOf('/')+1).replace(".json",""));
+        if(path.startsWith("/talkbox/guestbooks"))return NativeCommunity.route(uri,(String)request.getClass().getField("b").get(request));
         if(NativeCatalog.handles(path))return NativeCatalog.route(uri);
         if(path.contains("/apkforge/playback/"))throw new HttpFailure(501,"native-playback-api-unavailable");
+        if(path.matches("/v1/ANI[0-9]+E[0-9]+D?/android/phone/play"))throw new HttpFailure(501,"native-playback-api-unavailable");
         if(path.startsWith("/content-reviews/")){
             String method=(String)request.getClass().getField("b").get(request);
             String raw=requestBody(loader,request);JSONObject body=raw.isEmpty()?new JSONObject():new JSONObject(raw);
             String id=path.substring(path.lastIndexOf('/')+1);LocalProfiles p=profiles(loader);
-            JSONObject ratings=p.state("ratings");
-            if(method.equals("DELETE")){ratings.remove(id);p.saveState("ratings",ratings);return new JSONObject();}
-            if(method.equals("PUT")){ratings.put(id,body.optString("rating"));p.saveState("ratings",ratings);}
-            String rating=ratings.optString(id);int vote=rating.matches("[1-5]s")?Integer.parseInt(rating.substring(0,1)):0;
-            JSONObject result=new JSONObject().put("average",vote).put("total",vote==0?0:1).put("rating",rating);
-            for(int i=1;i<=5;i++)result.put(i+"s",new JSONObject().put("displayed",vote==i?1:0).put("percentage",vote==i?100:0));
-            return result;
+            synchronized(p){
+                JSONObject ratings=p.state("ratings");
+                if(method.equals("DELETE")){ratings.remove(id);p.saveState("ratings",ratings);return new JSONObject();}
+                if(method.equals("PUT")){ratings.put(id,body.optString("rating"));p.saveState("ratings",ratings);}
+                return NativeRatings.container(path.contains("/rating/episode/"),ratings.optString(id));
+            }
         }
         if(path.contains("/music/featured/"))return envelope(new JSONArray());
         if(path.contains("/similar_to/")){
@@ -114,6 +120,16 @@ public final class BackendBridge {
                 .put("account_id",p.accountId()).put("profile_id",p.selectedId());
         }
         if(path.endsWith("/accounts/v1/me"))return profiles(loader).account();
+        if(path.contains("/custom-lists")){
+            String method=(String)request.getClass().getField("b").get(request),raw=requestBody(loader,request);LocalProfiles p=profiles(loader);
+            synchronized(p){JSONObject state=p.state("custom-lists");JSONObject result=NativeLists.route(state,uri,method,raw.isEmpty()?new JSONObject():new JSONObject(raw));
+                if(!method.equals("GET"))p.saveState("custom-lists",state);return result;}
+        }
+        if(path.contains("/watch-history")){
+            String method=(String)request.getClass().getField("b").get(request);
+            if(method.equals("GET"))return envelope(new JSONArray()); // Native playback has not produced history yet.
+            throw new HttpFailure(501,"history-writes-not-configured");
+        }
         if(path.contains("/accounts/v1/me/multiprofile")||path.endsWith("/accounts/v1/usernames")){
             String method=(String)request.getClass().getField("b").get(request);
             String body=requestBody(loader,request);
@@ -169,7 +185,7 @@ public final class BackendBridge {
             while(ids.hasNext()){
                 String id=ids.next();JSONObject item=saved.getJSONObject(id);
                 if(path.contains("/discover/")&&category.equals("watchlist")){
-                    JSONObject title=series(Integer.parseInt(id.substring(3)));data.put(new JSONObject().put("panel",panel(title))
+                    JSONObject title=series(Integer.parseInt(id.substring(3)));data.put(new JSONObject().put("panel",NativeCatalog.watchlistPanel(title))
                         .put("is_favorite",item.optBoolean("is_favorite")).put("playhead",0).put("never_watched",true).put("fully_watched",false));
                 }else if(category.equals("watchlist")||uri.getQueryParameter("content_ids")==null||java.util.Arrays.asList(uri.getQueryParameter("content_ids").split(",")).contains(id))data.put(item);
             }
@@ -183,7 +199,9 @@ public final class BackendBridge {
         JSONObject ep=title.optJSONObject("episodes");if(ep==null)ep=new JSONObject();
         JSONObject tall=new JSONObject().put("source",title.optString("poster")).put("height",900).put("width",600).put("type","poster_tall");
         boolean hasBanner=!title.isNull("banner")&&!title.optString("banner").isEmpty();
-        JSONObject wide=new JSONObject().put("source",hasBanner?title.optString("banner"):title.optString("poster")).put("height",hasBanner?360:900).put("width",hasBanner?640:600).put("type","poster_wide");
+        // poster_wide is the original native screen's cropped presentation.
+        // Supplying portrait dimensions here expands its hero to a full poster.
+        JSONObject wide=new JSONObject().put("source",hasBanner?title.optString("banner"):title.optString("poster")).put("height",360).put("width",640).put("type","poster_wide");
         JSONObject images=new JSONObject().put("poster_tall",new JSONArray().put(new JSONArray().put(tall))).put("poster_wide",new JSONArray().put(new JSONArray().put(wide)));
         JSONObject metadata=new JSONObject().put("season_count",1).put("episode_count",ep.optInt("total")).put("is_subbed",ep.optInt("sub")>0).put("is_dubbed",ep.optInt("dub")>0).put("maturity_ratings",new JSONArray().put("TV-14")).put("audio_locales",new JSONArray().put("ja-JP").put("en-US")).put("subtitle_locales",new JSONArray().put("en-US"));
         return new JSONObject().put("id","ANI"+title.getInt("anilistId")).put("type","series").put("title",title.optString("title")).put("description",title.optString("synopsis")).put("images",images).put("series_metadata",metadata).put("channel_id","crunchyroll");

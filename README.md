@@ -2,6 +2,10 @@
 
 A local, dependency-free tool for inspecting Android APKs and recovering packaged web apps. Upload an APK, decode its manifest, inspect assets and framework evidence, trace web dependencies, preview bundled HTML, and export the recovered files with SHA-256 provenance.
 
+## Experimental original-screen Android APK
+
+The separate native migration keeps the supplied APK's original screen implementations and resources and adapts its backend to ani.pm catalog data and local guest profiles/lists. See [NATIVE_MIGRATION.md](NATIVE_MIGRATION.md) for the build recipe, 23 Android model-contract checks, tested native flows and remaining failures. Native streaming and Supabase login are unfinished; releases are experimental previews.
+
 ## Run the studio
 
 Python 3.10 or newer; no pip packages or Android SDK required.
