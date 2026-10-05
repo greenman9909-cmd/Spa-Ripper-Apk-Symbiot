@@ -31,6 +31,8 @@ The user reported not having opened the confirmation email, then that its link f
 
 ## Remaining registration acceptance
 
+Follow-up: after the user opened a confirmation email, a read-only aggregate verified that their existing account is now confirmed and has no pending confirmation token. A displayed invalid-link return page therefore does not establish that their account remains unconfirmed. The return page now recommends trying native login first, explains already-used links and explicitly states it cannot check account status. No server-side confirmation bypass or native APK change was made. Actual post-confirmation phone login is still awaiting user verification; this one delivered-email case does not establish production-wide SMTP readiness.
+
 1. User configures sender identity and provider SMTP directly in [SMTP settings](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/smtp). Confirm provider domain verification and delivery quotas. Do not silently purchase/upgrade services.
 2. Site URL was applied and verified in [URL configuration](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/url-configuration). Retain this HTTPS URL unless a verified replacement is approved.
 3. A real test inbox was requested after SMTP is saved. With explicit authorization, exercise native signup, email receipt, confirmation, return page and subsequent login. Then test duplicate email, expired/pending confirmation and resend. The original signup pending-confirmation UI still needs acceptance.

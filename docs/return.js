@@ -9,8 +9,8 @@
     window.history.replaceState(null, '', window.location.pathname);
     function render() {
     if (failed) {
-      document.getElementById('heading').textContent = 'This link could not be completed';
-      document.getElementById('message').textContent = 'The link may be expired or already used. Return to the app and request a new confirmation email.';
+      document.getElementById('heading').textContent = 'This link is no longer valid';
+      document.getElementById('message').textContent = 'The link may have expired or already been used to confirm your account. First return to the Android app and try signing in. If the app still says your email is unconfirmed, request a new confirmation email. This page cannot check your account status.';
     } else if (recovery) {
       document.getElementById('heading').textContent = 'Password recovery is not ready';
       document.getElementById('message').textContent = 'This preview does not yet provide a password reset screen for recovery links. Contact the app administrator.';
