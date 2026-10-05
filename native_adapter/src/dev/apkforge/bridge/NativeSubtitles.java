@@ -28,6 +28,10 @@ public final class NativeSubtitles {
             String local=PREFIX+UUID.randomUUID()+".ass";TRACKS.put(local,new Track(source));return local;
         }
     }
+    static String content(String url)throws Exception {
+        Track track;synchronized(TRACKS){track=TRACKS.get(url);}if(track==null)throw new IOException("Unknown subtitle");
+        synchronized(track){if(track.ass==null)track.ass=toAss(NativePlayback.get(track.source,NativePlayback.REFERER));return track.ass;}
+    }
     public static WebResourceResponse intercept(WebResourceRequest request){
         String url=request.getUrl().toString();if(!url.startsWith(PREFIX))return null;
         Track track;synchronized(TRACKS){track=TRACKS.get(url);}
@@ -68,7 +72,7 @@ public final class NativeSubtitles {
     static String toAss(String vtt)throws IOException {
         String normalized=vtt.replace("\r\n","\n").replace('\r','\n');if(normalized.startsWith("\ufeff"))normalized=normalized.substring(1);
         if(!normalized.startsWith("WEBVTT")||normalized.length()>1048576)throw new IOException("Invalid WebVTT subtitle");
-        StringBuilder out=new StringBuilder("[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,Arial,42,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,32,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
+        StringBuilder out=new StringBuilder("[Script Info]\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Default,Arial,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,1,2,36,36,36,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n");
         int count=0;
         for(String block:normalized.split("\n[ \\t]*\n")){
             String[] lines=block.split("\n");if(lines.length==0||lines[0].startsWith("NOTE")||lines[0].startsWith("STYLE")||lines[0].startsWith("REGION")||lines[0].startsWith("WEBVTT"))continue;

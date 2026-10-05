@@ -110,9 +110,10 @@ public final class BackendBridge {
         }
         // Legacy model label for replacement-backend capabilities only. This is
         // not an official subscription, token, license or access to its media.
-        if(path.startsWith("/subs/")&&path.endsWith("/benefits"))return new JSONObject().put("items",new JSONArray().put(new JSONObject().put("benefit","cr_premium").put("source","apkforge-local")));
-        // The replacement guest backend offers no subscriptions or purchases.
+        if(path.startsWith("/subs/")&&path.endsWith("/benefits")){CloudSession.init(loader);CloudSession.requireSession();return NativeDownloads.benefits();}
+        // The replacement backend offers these capabilities free, with no purchases.
         if(path.startsWith("/subs/"))return new JSONObject().put("items",new JSONArray());
+        if(path.matches("/v1/ANI[0-9]+E[0-9]+D?/android/phone/download")){CloudSession.init(loader);CloudSession.requireSession();return NativeDownloads.prepare(path.split("/")[2],integer(uri.getQueryParameter("resolution"),720));}
         if(path.startsWith("/skip-events/"))return NativePlayback.skipEvents(path.substring(path.lastIndexOf('/')+1).replace(".json",""));
         if(path.startsWith("/talkbox/guestbooks")){
             String raw=requestBody(loader,request);return NativeCommunity.route(uri,(String)request.getClass().getField("b").get(request),raw.isEmpty()?new JSONObject():new JSONObject(raw),profiles(loader));
@@ -271,7 +272,7 @@ public final class BackendBridge {
         boolean hasBanner=!title.isNull("banner")&&!title.optString("banner").isEmpty();
         // poster_wide is the original native screen's cropped presentation.
         // Supplying portrait dimensions here expands its hero to a full poster.
-        JSONObject wide=new JSONObject().put("source",hasBanner?title.optString("banner"):title.optString("poster")).put("height",360).put("width",640).put("type","poster_wide");
+        JSONObject wide=new JSONObject().put("source",NativeArtwork.wide(hasBanner?title.optString("banner"):title.optString("poster"))).put("height",720).put("width",1280).put("type","poster_wide");
         JSONObject images=new JSONObject().put("poster_tall",new JSONArray().put(new JSONArray().put(tall))).put("poster_wide",new JSONArray().put(new JSONArray().put(wide)));
         JSONArray audio=new JSONArray();if(ep.optInt("sub")>0)audio.put("ja-JP");if(ep.optInt("dub")>0)audio.put("en-US");
         JSONArray maturity=new JSONArray();if(!title.optString("rating","").isEmpty())maturity.put(title.getString("rating"));

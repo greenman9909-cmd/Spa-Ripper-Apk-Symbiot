@@ -24,6 +24,7 @@ def main():
     parser.add_argument('--stream-live', action='store_true', help='Resolve and validate a live HLS manifest on Android, without playing media')
     parser.add_argument('--catalog-live', action='store_true', help='Check hybrid catalog pagination, episode enrichment and skip metadata')
     parser.add_argument('--subtitles-live', action='store_true', help='Fetch and convert English and both Spanish tracks for a live episode')
+    parser.add_argument('--franchise-live', action='store_true', help='Verify grouped One-Punch Man seasons, all genre filters/artwork and real languages')
     parser.add_argument('--sdk', type=Path, default=Path(os.environ.get('ANDROID_HOME', Path.home() / 'AppData/Local/Android/Sdk')))
     args = parser.parse_args()
     if not args.serial.startswith('emulator-'):
@@ -47,8 +48,8 @@ def main():
     run('adb', '-s', args.serial, 'push', ROOT / 'android-build/Original-UI-AniPM.apk', remote + '/app.apk')
     run('adb', '-s', args.serial, 'push', work / 'classes.dex', remote + '/probe.dex')
     result = run('adb', '-s', args.serial, 'shell', 'env', 'CLASSPATH=' + remote + '/app.apk:' + remote + '/probe.dex',
-                 'app_process', '/', 'dev.apkforge.bridge.ModelContractProbe', *(['--cloud-negative'] if args.cloud_negative else []), *(['--stream-live'] if args.stream_live else []), *(['--catalog-live'] if args.catalog_live else []), *(['--subtitles-live'] if args.subtitles_live else []), capture=True)
-    if 'Native model contracts passed: 75' not in result:
+                 'app_process', '/', 'dev.apkforge.bridge.ModelContractProbe', *(['--cloud-negative'] if args.cloud_negative else []), *(['--stream-live'] if args.stream_live else []), *(['--catalog-live'] if args.catalog_live else []), *(['--subtitles-live'] if args.subtitles_live else []), *(['--franchise-live'] if args.franchise_live else []), capture=True)
+    if 'Native model contracts passed: 93' not in result:
         raise RuntimeError('Native model contracts did not report success: ' + result)
     print(result.strip())
 

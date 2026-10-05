@@ -42,7 +42,7 @@ public final class ModelContractProbe {
         Object panel=decode("com.ellation.crunchyroll.model.Panel",BackendBridge.panel(title));
         check(call(panel,"getResourceType").toString().equals("series"),"Panel must be navigable by original screen");
         Object images=call(panel,"getImages");java.util.List<?> wide=(java.util.List<?>)call(images,"getPostersWide");
-        Object image=wide.get(0);check(((Number)call(image,"getWidth")).intValue()==640&&((Number)call(image,"getHeight")).intValue()==360,"Wide hero presentation ratio");checks++;
+        Object image=wide.get(0);check(((Number)call(image,"getWidth")).intValue()==1280&&((Number)call(image,"getHeight")).intValue()==720,"Wide hero presentation ratio");checks++;
         Object book=decode("com.ellation.crunchyroll.api.etp.commenting.model.Guestbook",NativeCommunity.route(android.net.Uri.parse("https://local/talkbox/guestbooks/ANI269E1"),"GET"));
         check(call(book,"getGuestbookKey").equals("ANI269E1")&&((Number)call(book,"getTotalComments")).intValue()==0,"Empty replacement guestbook contract");checks++;
         Object comments=decode("com.ellation.crunchyroll.api.etp.commenting.model.CommentPreview",NativeCommunity.route(android.net.Uri.parse("https://local/talkbox/guestbooks/ANI269E1/comments"),"GET"));
@@ -132,7 +132,7 @@ public final class ModelContractProbe {
         for(String unsafe:new String[]{"http://example.invalid/a","https://127.0.0.1/a","https://user:password@example.invalid/a","file:///a"}){
             try{NativePlayback.publicHttps(unsafe);throw new AssertionError("Invalid source URL accepted");}catch(java.io.IOException expected){}
         }checks++;
-        Object category=decode("com.ellation.crunchyroll.model.categories.Category",NativeDiscovery.categories().getJSONArray("data").getJSONObject(0));
+        Object category=decode("com.ellation.crunchyroll.model.categories.Category",NativeDiscovery.categories(false).getJSONArray("data").getJSONObject(0));
         check(call(category,"getTenantCategoryId").equals("action")&&call(call(category,"getLocalization"),"getTitle").equals("Action"),"Native category localization contract");checks++;
         JSONObject filters=NativeDiscovery.variables(android.net.Uri.parse("https://local/browse?categories=sci-fi,action&seasonal_tag=2026-fall&sort_by=alphabetical&q=Test"));
         check(filters.getJSONArray("genres").getString(0).equals("Sci-Fi")&&filters.getString("season").equals("FALL")&&filters.getInt("year")==2026&&filters.getJSONArray("sort").getString(0).equals("TITLE_ROMAJI"),"Discovery filters must preserve genre/year/sort semantics");checks++;
@@ -141,7 +141,7 @@ public final class ModelContractProbe {
         JSONObject enriched=new JSONObject(title.toString());enriched.getJSONArray("episodeList").getJSONObject(0).put("thumbnail",JSONObject.NULL).put("title",JSONObject.NULL);
         NativeMetadata.mergeEpisodes(enriched,new JSONObject().put("1",new JSONObject().put("image","https://example.invalid/episode1.jpg").put("title",new JSONObject().put("en","A real episode title")).put("overview","Episode overview")));
         JSONObject enrichedEpisode=NativeCatalog.episode(enriched,enriched.getJSONArray("episodeList").getJSONObject(0));
-        check(enrichedEpisode.getString("title").equals("A real episode title")&&enrichedEpisode.getJSONObject("images").getJSONArray("thumbnail").getJSONArray(0).getJSONObject(0).getString("source").endsWith("episode1.jpg")&&enrichedEpisode.getJSONArray("versions").length()==2,"Episode metadata enrichment must retain source audio availability");checks++;
+        check(enrichedEpisode.getString("title").equals("A real episode title")&&enrichedEpisode.getJSONObject("images").getJSONArray("thumbnail").getJSONArray(0).getJSONObject(0).getString("source").equals(NativeArtwork.wide("https://example.invalid/episode1.jpg"))&&enrichedEpisode.getJSONArray("versions").length()==2,"Episode metadata enrichment must retain source audio availability");checks++;
         JSONObject skip=NativePlayback.mapSkipEvents("ANI21E1",new JSONObject().put("intro",new JSONObject().put("start",31).put("end",111)).put("outro",new JSONObject().put("start",1376).put("end",1447)));
         Object skips=decode("com.ellation.crunchyroll.api.etp.playback.model.SkipEvents",skip);
         check(((Number)call(call(skips,"getIntro"),"getEndSeconds")).doubleValue()==111&&call(call(skips,"getCredits"),"getType").toString().equals("CREDITS"),"Native skip events must use provider timestamps and original enums");checks++;
@@ -188,7 +188,56 @@ public final class ModelContractProbe {
         long chars=0;java.lang.reflect.Field dataField=entry.getDeclaredField("data");dataField.setAccessible(true);for(Object value:memory.values())chars+=((String)dataField.get(value)).length();
         check(chars<=3*1024*1024&&memory.size()<8,"A few large metadata responses must respect memory budgets before the entry-count limit");memory.clear();checks++;
         check(!BackendBridge.signedIn(new Object()),"Missing app/session context must not grant guest access");checks++;
+        int[] panorama=NativeArtwork.cropBounds(2300,450),portrait=NativeArtwork.cropBounds(600,900);
+        check(panorama[2]==800&&panorama[3]==450&&panorama[0]==750,"Panorama must be cropped to 16:9, not flattened");checks++;
+        check(portrait[2]==600&&portrait[3]==337&&portrait[1]>0,"Portrait fallback preserves proportions with a bounded crop");checks++;
+        android.graphics.Bitmap bitmap=android.graphics.Bitmap.createBitmap(2300,450,android.graphics.Bitmap.Config.RGB_565);java.io.ByteArrayOutputStream bitmapBytes=new java.io.ByteArrayOutputStream();bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,bitmapBytes);bitmap.recycle();
+        byte[] cropped=NativeArtwork.crop(bitmapBytes.toByteArray());android.graphics.BitmapFactory.Options dimensions=new android.graphics.BitmapFactory.Options();dimensions.inJustDecodeBounds=true;android.graphics.BitmapFactory.decodeByteArray(cropped,0,cropped.length,dimensions);
+        check(dimensions.outWidth==800&&dimensions.outHeight==450,"Actual decoded artwork keeps intended dimensions without upscaling");checks++;
+        Object sizeModel=Class.forName("com.ellation.crunchyroll.ui.images.BestImageSizeModelUrlImpl").getConstructor(String.class).newInstance(NativeArtwork.wide("https://example.invalid/art.jpg"));
+        Object load=NativeArtwork.load(sizeModel,640,360);check(load!=null&&call(load.getClass().getField("c").get(load),"a").equals(java.io.InputStream.class),"Registered wide images use the original Glide data-fetcher contract");checks++;
+        JSONObject source2=new JSONObject(title.toString()).put("anilistId",154588).put("poster","https://example.invalid/latest.jpg");
+        JSONObject joined=NativeFranchises.merge(java.util.Arrays.asList(title,source2));
+        check(joined.getJSONArray("episodeList").length()==4&&NativeSeasons.numbers(joined).size()==2&&joined.getString("poster").endsWith("latest.jpg"),"Verified seasons keep all episodes and latest artwork");checks++;
+        JSONObject joinedEpisode=NativeCatalog.episode(joined,joined.getJSONArray("episodeList").getJSONObject(2));
+        check(joinedEpisode.getString("id").equals("ANI154588E1")&&joinedEpisode.getString("series_id").equals("ANI154587")&&joinedEpisode.getString("season_id").equals("ANI154587S2"),"Season 2 E1 must resolve its source ID, while navigation uses the common series");checks++;
+        cached.put(154587,joined);cached.put(154588,joined);
+        check(NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/discover/up_next/ANI154587E2")).getJSONArray("data").getJSONObject(0).getJSONObject("panel").getString("id").equals("ANI154588E1"),"Next must cross different provider series IDs at a season boundary");checks++;
+        check(NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/discover/up_next/ANI154588E1D")).getJSONArray("data").getJSONObject(0).getJSONObject("panel").getString("id").equals("ANI154588E2D"),"Next must retain source season and requested dubbed audio");checks++;
+        JSONObject firstSeason=new JSONObject().put("anilistId",27000).put("format","TV").put("title","Grouped title").put("status","FINISHED").put("poster","https://example.invalid/first.jpg").put("episodes",new JSONObject().put("total",12)).put("relations",new org.json.JSONArray().put(new JSONObject().put("relationType","SEQUEL").put("node",new JSONObject().put("id",27001).put("format","TV").put("status","FINISHED"))));
+        JSONObject secondSeason=new JSONObject(firstSeason.toString()).put("anilistId",27001).put("poster","https://example.invalid/second.jpg").put("relations",new org.json.JSONArray().put(new JSONObject().put("relationType","PREQUEL").put("node",new JSONObject().put("id",27000).put("format","TV").put("status","FINISHED"))));
+        org.json.JSONArray collapsed=NativeFranchises.collapse(new org.json.JSONArray().put(secondSeason).put(firstSeason));
+        check(collapsed.length()==1&&collapsed.getJSONObject(0).getInt("anilistId")==27000&&collapsed.getJSONObject(0).getJSONObject("episodes").getInt("total")==24,"Search merges actual sequels regardless of result order");checks++;
+        JSONObject ova=new JSONObject(firstSeason.toString()).put("format","OVA");check(NativeFranchises.links(ova,"SEQUEL").isEmpty(),"OVAs and movies must not become TV seasons by name guessing");checks++;
+        org.json.JSONArray benefits=NativeDownloads.benefits().getJSONArray("items");java.util.List<Object> benefitModels=new java.util.ArrayList<>();for(int i=0;i<benefits.length();i++)benefitModels.add(decode("com.ellation.crunchyroll.api.etp.subscription.model.Benefit",benefits.getJSONObject(i)));
+        Class<?> benefitKt=Class.forName("com.ellation.crunchyroll.api.etp.subscription.model.BenefitKt");check((Boolean)benefitKt.getMethod("isAtLeastMegaFanUser",java.util.List.class).invoke(null,benefitModels)&&(Boolean)benefitKt.getMethod("hasOfflineViewingBenefit",java.util.List.class).invoke(null,benefitModels),"Replacement accounts expose full local capabilities without purchasing an official subscription");checks++;
+        check(NativeDownloads.variant("https://example.invalid/master.m3u8","#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1280x720\n720.m3u8\n#EXT-X-STREAM-INF:RESOLUTION=640x360\n360.m3u8\n",480).endsWith("360.m3u8"),"Offline quality uses the actual requested HLS variant");checks++;
+        NativeDownloads.validate("#EXTM3U\n#EXTINF:10,\na.ts\n#EXT-X-ENDLIST\n");checks++;
+        for(String invalid:new String[]{"#EXTM3U\n#EXTINF:10,\na.ts","#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,KEYFORMAT=\"com.apple.streamingkeydelivery\"\n#EXT-X-ENDLIST","#EXTM3U\n#EXT-X-KEY:METHOD=AES-128-INVALID\n#EXT-X-ENDLIST"}){try{NativeDownloads.validate(invalid);throw new AssertionError("Unsupported offline manifest accepted");}catch(java.io.IOException expected){}}checks++;
+        Object download=decode("com.ellation.crunchyroll.api.etp.download.model.DownloadResponse",NativeDownloads.response("https://example.invalid/360.m3u8",new JSONObject().put("es-ES",new JSONObject().put("locale","es-ES").put("format","ass").put("url","https://example.invalid/sub.ass").put("localFilePath","/data/user/0/test/offline.ass"))));
+        check(call(download,"getManifestUrl").equals("https://example.invalid/360.m3u8")&&call(download,"getVideoToken").equals("")&&call(((java.util.Map<?,?>)call(download,"getSubtitles")).get("es-ES"),"getLocalFilePath").equals("/data/user/0/test/offline.ass"),"Original download model retains media URI and local subtitle file");checks++;
+        Class<?> managerClass=Class.forName("com.ellation.crunchyroll.downloading.exoplayer.ExoPlayerLocalVideosManagerImpl"),streamClass=Class.forName("com.ellation.crunchyroll.api.cms.model.streams.Stream");
+        Class.forName(managerClass.getName()+"$h").getConstructor(String.class,streamClass,managerClass);Class.forName(managerClass.getName()+"$h").getMethod("invoke",Object.class);
+        Class.forName(managerClass.getName()+"$i").getConstructor(managerClass,String.class);Class.forName(managerClass.getName()+"$i").getMethod("invoke",Object.class);checks++;
+        check(Class.forName("b6.i").getField("b").getType().equals(Class.forName("b6.u"))&&Class.forName("b6.u").getMethod("c",String.class).getReturnType().equals(Class.forName("b6.c"))&&Class.forName("b6.c").getField("b").getType().equals(int.class),"Original offline index exposes the expected completion state contract");checks++;
+        check(NativeSubtitles.toAss("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHola\n").contains("Style: Default,Arial,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1"),"Separate tracks match bold white text with black outline");checks++;
         System.out.println("Native model contracts passed: "+checks);
+        for(String arg:args)if(arg.equals("--franchise-live")){
+            JSONObject categories=NativeDiscovery.categories();org.json.JSONArray genres=categories.getJSONArray("data");
+            check(genres.length()==17,"All genre routes retained");
+            for(int i=0;i<genres.length();i++){
+                JSONObject genre=genres.getJSONObject(i);Object original=decode("com.ellation.crunchyroll.model.categories.Category",genre);check(!((java.util.List<?>)call(original,"getBackgrounds")).isEmpty(),"Real genre artwork missing for "+genre.getString("id"));
+                JSONObject filtered=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?categories="+genre.getString("id")+"&start=0&n=3"));
+                org.json.JSONArray entries=filtered.getJSONArray("data");check(entries.length()>0,"Genre list empty for "+genre.getString("id"));
+                String expectedGenre=genre.getJSONObject("localization").getString("title");for(int j=0;j<entries.length();j++){JSONObject cachedTitle=BackendBridge.cachedTitle(Integer.parseInt(entries.getJSONObject(j).getString("id").substring(3)));boolean contains=false;org.json.JSONArray labels=cachedTitle.getJSONArray("genres");for(int g=0;g<labels.length();g++)if(expectedGenre.equals(labels.getString(g)))contains=true;check(contains,"Genre route lost its filter");}
+            }
+            System.out.println("Live genres passed: 17 artwork models and 17 nonempty correctly filtered lists");
+            JSONObject search=NativeDiscovery.route(android.net.Uri.parse("https://local/search?q=one%20punch%20man&n=25"));org.json.JSONArray cards=search.getJSONArray("data").getJSONObject(0).getJSONArray("items");int matching=0;for(int i=0;i<cards.length();i++)if(cards.getJSONObject(i).getString("id").equals("ANI21087"))matching++;check(matching==1,"One-Punch Man root must have one grouped search card");
+            JSONObject group=NativeFranchises.series(21087);check(NativeSeasons.numbers(group).size()==3,"One-Punch Man must expose three available seasons");
+            for(int season=1;season<=3;season++){JSONObject list=NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/cms/seasons/ANI21087S"+season+"/episodes"));org.json.JSONArray eps=list.getJSONArray("data");check(eps.length()>0,"Season has no episodes");String asset=eps.getJSONObject(0).getString("id");int expected=season==1?21087:season==2?97668:153800;check(asset.equals("ANI"+expected+"E1"),"Wrong first source episode for season "+season);JSONObject ep=NativeCatalog.route(android.net.Uri.parse("https://local/content/v2/cms/episodes/"+asset));check(ep.getJSONArray("data").getJSONObject(0).getString("season_id").equals("ANI21087S"+season),"Episode click lost its group");System.out.println("Season "+season+": "+eps.length()+" real episodes, first source "+asset);}
+            JSONObject playback=NativePlayback.resolve("ANI21087E1");String downloadHls=playback.getJSONObject("streams").getJSONObject("adaptive_hls").getJSONObject("").getString("url");String chosen=NativeDownloads.variant(downloadHls,NativePlayback.get(downloadHls,NativePlayback.REFERER),360);NativeDownloads.validate(NativePlayback.get(chosen,NativePlayback.REFERER));
+            System.out.println("Live non-DRM HLS download manifest passed; One-Punch Man E1 subtitle locales: "+playback.getJSONObject("subtitles").names());
+        }
         for(String arg:args)if(arg.equals("--catalog-live")){
             JSONObject one=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=0&n=25")),two=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=25&n=25"));
             java.util.HashSet<String> ids=new java.util.HashSet<>();for(int i=0;i<one.getJSONArray("data").length();i++)ids.add(one.getJSONArray("data").getJSONObject(i).getString("id"));

@@ -20,8 +20,8 @@ from android_formats import ANDROID, decode_manifest, strings_pool
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_SHA256 = '9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1'
-BUILD_VERSION = '0.4.8'
-BUILD_CODE = 1000048
+BUILD_VERSION = '0.4.9'
+BUILD_CODE = 1000049
 
 
 def sha(data):
@@ -122,6 +122,9 @@ def main():
         ('do/b.smali', 'replacement avatar and wallpaper URL mapping in original picker'),
         ('gk/b.smali', 'WebVTT conversion for the retained local subtitle renderer'),
         ('com/ellation/crunchyroll/ui/images/CloudflareImagesBuilder.smali', 'replacement artwork in original image URL builder'),
+        ('com/ellation/crunchyroll/ui/images/BestImageModelLoader.smali', 'bounded 16:9 replacement artwork fetcher on Glide worker'),
+        ('com/ellation/crunchyroll/downloading/exoplayer/ExoPlayerLocalVideosManagerImpl.smali', 'replacement non-DRM HLS preparation in original download queue'),
+        ('uy/a.smali', 'provider headers on retained download cache data source'),
     ]
     for relative, reason in paths:
         path = copied[relative]
@@ -131,6 +134,35 @@ def main():
         elif relative.endswith('SharedPreferencesTokenStorage.smali'):
             text = replace_method(text, 'public getRefreshToken()Ljava/lang/String;', '    .locals 1\n    invoke-static {p0}, Ldev/apkforge/bridge/BackendBridge;->refreshMarker(Ljava/lang/Object;)Ljava/lang/String;\n    move-result-object v0\n    return-object v0')
             text = replace_method(text, 'public isPresent()Z', '    .locals 1\n    invoke-static {p0}, Ldev/apkforge/bridge/BackendBridge;->signedIn(Ljava/lang/Object;)Z\n    move-result v0\n    return v0')
+        elif relative.endswith('ExoPlayerLocalVideosManagerImpl.smali'):
+            signature='public final b4(Ljava/lang/String;Lcom/ellation/crunchyroll/api/cms/model/streams/Stream;)V'
+            start=text.index('.method '+signature);end=text.index('.end method',start)
+            section=text[start:end];anchor=re.search(r'    \.locals \d+',section).group(0)
+            section=section.replace(anchor,anchor+'''
+    invoke-static {p0, p1, p2}, Ldev/apkforge/bridge/NativeDownloads;->start(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/Object;)Z
+    move-result v0
+    if-eqz v0, :apkforge_original_download
+    return-void
+    :apkforge_original_download''',1)
+            text=text[:start]+section+text[end:]
+        elif relative == 'uy/a.smali':
+            start=text.index('.method public final declared-synchronized d()Lk5/f$a;');end=text.index('.end method',start)
+            section=text[start:end]
+            if section.count('    return-object v0')!=1: raise ValueError('Download factory recipe changed')
+            section=section.replace('    return-object v0','    invoke-static {v0}, Ldev/apkforge/bridge/NativePlayback;->configureMediaFactory(Ljava/lang/Object;)V\n    return-object v0')
+            text=text[:start]+section+text[end:]
+        elif relative.endswith('BestImageModelLoader.smali'):
+            signature='public buildLoadData(Lcom/ellation/crunchyroll/ui/images/BestImageSizeModel;IILmb/h;)Lsb/o$a;'
+            start=text.index('.method '+signature);end=text.index('.end method',start)
+            section=text[start:end];anchor=re.search(r'    \.locals \d+',section).group(0)
+            section=section.replace(anchor,anchor+'''
+    invoke-static {p1, p2, p3}, Ldev/apkforge/bridge/NativeArtwork;->load(Ljava/lang/Object;II)Ljava/lang/Object;
+    move-result-object v0
+    if-eqz v0, :apkforge_original_loader
+    check-cast v0, Lsb/o$a;
+    return-object v0
+    :apkforge_original_loader''',1)
+            text=text[:start]+section+text[end:]
         elif relative.endswith('CloudflareImagesBuilder.smali'):
             signature='public build(Ljava/lang/String;Lcom/ellation/crunchyroll/ui/images/CloudflareImagesBuilder$ImageType;Ljava/util/List;)Ljava/lang/String;'
             start=text.index('.method '+signature);end=text.index('.end method',start)

@@ -45,7 +45,8 @@ public final class NativePlayback {
         try {
             String id=(String)asset.getClass().getMethod("getId").invoke(asset);
             Log.i("APKForgeNative","Resolving native HLS "+id);
-            return model("com.ellation.crunchyroll.api.cms.model.streams.Streams",resolve(id));
+            JSONObject local=NativeDownloads.completed(id);
+            return model("com.ellation.crunchyroll.api.cms.model.streams.Streams",local==null?resolve(id):local);
         }catch(IOException e){throw e;}catch(Exception e){throw new IOException("Native stream mapping failed",e);}
     }
     /** Retains Kotlin suspension and dispatch, keeping provider I/O off the UI thread. */
@@ -169,6 +170,7 @@ public final class NativePlayback {
     @SuppressWarnings({"unchecked","rawtypes"})
     public static Object mapHls(String asset,Object streams,Object offline,String params){
         try {
+            if(offline!=null){String name=offline.getClass().getName();if(name.equals("jg.d$a")&&offline.getClass().getField("a").getBoolean(offline)||name.equals("jg.d$b")&&offline.getClass().getField("a").getBoolean(offline))return null;}
             Map<?,?> hls=(Map<?,?>)streams.getClass().getMethod("getHlsStreams").invoke(streams);if(hls==null||hls.isEmpty())return null;
             Object stream=hls.get("");if(stream==null)stream=hls.values().iterator().next();
             String url=(String)stream.getClass().getMethod("getUrl").invoke(stream);publicHttps(url);
