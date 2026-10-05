@@ -29,6 +29,6 @@ Only emulator-5560, exact AVD APKForge_Original_UI, Android API 37, was operated
 
 This is a tested preview, not production readiness. Subtitle languages vary by episode. No tested source advertised hard-sub metadata; matching explicit variants are preferred, but the app does not burn subtitles into video. WebVTT conversion simplifies provider styling/positioning.
 
-Fresh-device cloud restore, conflict-aware multi-device synchronization, signup confirmation/recovery, all language/audio/device combinations, Home return/rotation, deeper discovery/filter paging and the user's generic Oops failure remain unverified. Comment popularity ranking/moderation, history, downloads, music and store remain incomplete. The Supabase security advisor warns that leaked-password protection is disabled.
+Fresh-device cloud restore, conflict-aware multi-device synchronization, signup confirmation/recovery, all language/audio/device combinations, Home return/rotation, deeper discovery/filter paging and the user's generic Oops failure remain unverified. Comment popularity ranking/moderation, history, downloads, music and store remain incomplete. An earlier Supabase advisor warned about disabled leaked-password protection; the final check returned no lints. Auth security options still need dedicated production validation.
 
 See AGENT_HANDOFF.md for the continuation plan and safe build/device/publication procedure. Temporary own test accounts and their cloud data are removed after validation; credentials are not included in source or release assets.

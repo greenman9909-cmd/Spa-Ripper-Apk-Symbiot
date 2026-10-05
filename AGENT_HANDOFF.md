@@ -47,7 +47,7 @@ Providers:
 - https://anivexaapi-aniko2.hf.space/api/watch/ID/sub-or-dub/EP: ssub/sdub. Resolver validates HLS and applies provider UA/Referer to media/subtitles. Do not introduce media DRM/license bypasses.
 - Supabase **Spa-Ripper-AniPM**, project **yhccrdatocqqniblpshm**, https://yhccrdatocqqniblpshm.supabase.co, eu-west-3, approved 0/month. Public publishable key already in client; never embed service-role keys.
 
-All six checked-in migrations are deployed: account snapshots, comments, rate limit, votes, native IDs and comment avatars. Snapshots are owner-private. Comments permit guest read/authenticated owner write/delete. Vote rows are private; fixed-search-path helper exposes aggregates/caller flags. Latest security advisor warning: leaked-password protection disabled; do not silently add paid features.
+All six checked-in migrations are deployed: account snapshots, comments, rate limit, votes, native IDs and comment avatars. Snapshots are owner-private. Comments permit guest read/authenticated owner write/delete. Vote rows are private; fixed-search-path helper exposes aggregates/caller flags. An earlier advisor warned that leaked-password protection was disabled; the final advisor returned no lints. Verify Auth security separately before production, without silently adding paid features.
 
 Remove temporary own test accounts/comments after checks. Never publish fixture credentials, tokens, signing keys, decoded original sources or signed media URLs. android-build is ignored. Untracked artifacts predates this continuation: preserve/inspect before publication.
 
