@@ -56,9 +56,10 @@ def dex_fixture(values):
     return bytes(result)
 
 
-def binary_manifest(utf8=True):
+def binary_manifest(utf8=True, release_version=False):
     strings = ['manifest', 'package', 'dev.fixture', 'http://schemas.android.com/apk/res/android',
                'versionCode', 'application', 'debuggable']
+    if release_version: strings += ['versionName','3.61.0']
     offsets, content = [], bytearray()
     for value in strings:
         offsets.append(len(content))
@@ -81,12 +82,26 @@ def binary_manifest(utf8=True):
     def end(name):
         return struct.pack('<HHIIIII', 0x103, 16, 24, 1, none, none, name)
 
-    chunks = pool + begin(0, [(none, 1, 2, 3, 2), (3, 4, none, 16, 42)])
+    attrs = [(none, 1, 2, 3, 2), (3, 4, none, 16, 770 if release_version else 42)]
+    if release_version: attrs.append((3,7,8,3,8))
+    chunks = pool + begin(0, attrs)
     chunks += begin(5, [(3, 6, none, 18, 1)]) + end(5) + end(0)
     return struct.pack('<HHI', 3, 8, len(chunks) + 8) + chunks
 
 
 class AndroidFormatTests(unittest.TestCase):
+    def test_release_version_preserves_manifest_semantics(self):
+        from build_preserved_apk import version_manifest
+        for utf8 in (True,False):
+            original=binary_manifest(utf8,release_version=True)
+            patched=version_manifest(original)
+            root=formats.decode_manifest(patched)
+            self.assertEqual(root.get(formats.ANDROID+'versionName'),'0.4.4')
+            self.assertEqual(root.get(formats.ANDROID+'versionCode'),'1000044')
+            self.assertEqual(root.get('package'),'dev.fixture')
+            self.assertEqual(root.find('application').get(formats.ANDROID+'debuggable'),'true')
+            self.assertEqual(len(original),len(patched))
+        with self.assertRaises(ValueError): version_manifest(binary_manifest())
     def test_real_binary_xml_utf8_and_utf16(self):
         for utf8 in (True, False):
             with self.subTest(utf8=utf8):

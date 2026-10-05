@@ -62,6 +62,12 @@ The repository contains the adapter and build recipe. Original decoded sources, 
 
 Observed provider protocol references: [Anivexa watch response](https://anivexaapi-aniko2.hf.space/api/watch/21/sub/1), [MegaPlay public player client](https://megaplay.buzz/lib/app.main.js), and [ani.pm developers](https://ani.pm/developers). These third-party endpoints can change; no signed media URLs are committed.
 
+## Identifiable installation packaging (0.4.4)
+
+Earlier previews retained the source versionName `3.61.0` and versionCode `770`, and shared the same APK filename. This made older downloads and installations difficult to distinguish. The 0.4.4 preview now has versionName `0.4.4`, code `1000044`, and a versioned download filename. Only the two root manifest version attributes are rewritten; the build compares the entire decoded manifest after normalizing those attributes to guarantee components, permissions and configuration are unchanged.
+
+44 Python tests pass, including UTF-8/UTF-16 manifest version fixtures; 34 Android model contracts pass. The signed update installs over the previous development-signed preview with its data intact and Android reports the new version. 4,665 original non-signature members remain byte-identical; manifest version attributes, the backend DEX and signing stamp are explicit exceptions. Native HLS code is unchanged. Browse, opening Bleach, and starting Bleach episode 1 sub were rechecked on 0.4.3 before this metadata-only rebuild. The user's report of failing title/video pages has not yet been reproduced or attributed to a specific installed build/device.
+
 The native migration is not considered complete. Release notes report the validated flows and remaining limitations rather than a fidelity or accuracy percentage.
 
 The Android contract check compiles only `native_adapter/tests`, loads the current signed APK through Android `app_process`, and uses the original model classes/Gson configuration. Test code is excluded from the appended APK payload. `native_ui_probe.py` requires the exact isolated AVD name before reading/clicking, rejects stale UI dumps, and selects current original-app controls by text or description. Its optional ASCII fixture input rejects password fields.

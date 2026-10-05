@@ -4,7 +4,9 @@ A local, dependency-free tool for inspecting Android APKs and recovering package
 
 ## Experimental original-screen Android APK
 
-The separate native migration keeps the supplied APK's original screen implementations and resources and adapts its backend to ani.pm catalog data and local guest profiles/lists. See [NATIVE_MIGRATION.md](NATIVE_MIGRATION.md) for the build recipe, 23 Android model-contract checks, tested native flows and remaining failures. Native streaming and Supabase login are unfinished; releases are experimental previews.
+The separate native migration keeps the supplied APK's original screen implementations and resources and adapts its backend to ani.pm catalog data and local guest profiles/lists. Native HLS playback has been tested for One Piece and Bleach episode 1 sub in the original Android player. Successful native Supabase login and complete backend migration remain unverified/unfinished. See [NATIVE_MIGRATION.md](NATIVE_MIGRATION.md) for the build recipe, 34 Android model-contract checks and limits.
+
+Current preview: [Original-UI-AniPM-v0.4.4.apk](https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot/releases/download/v0.4.4-native-preview/Original-UI-AniPM-v0.4.4.apk). Android App Info must show version **0.4.4**, code **1000044**. Earlier downloads all displayed the original 3.61.0 / 770 metadata. This packaging update makes installations identifiable; it does not claim to fix an unreproduced device-specific playback failure.
 
 ## Run the studio
 
