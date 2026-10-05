@@ -7,7 +7,7 @@
 The owner connected the correct Supabase organization through the browser. Read-only dashboard inspection established:
 
 - Custom SMTP is **disabled**. Signup/email are enabled and email confirmation is required.
-- Site URL is **http://localhost:3000**; there are no additional redirect URLs.
+- Site URL initially was **http://localhost:3000** with no additional redirect URLs. With explicit user approval, it is now saved as **https://greenman9909-cmd.github.io/Spa-Ripper-Apk-Symbiot/**; the dashboard displayed the saved value and disabled Save changes.
 - Supabase's [default SMTP documentation](https://supabase.com/docs/guides/auth/auth-smtp) says email delivery without custom SMTP is restricted to project-team addresses. This blocks ordinary external users from completing confirmation-required signup.
 - The user said they have an SMTP provider and will configure it directly in Supabase. Credentials must not be pasted into chat, committed or embedded in the APK.
 
@@ -19,13 +19,13 @@ The page has no authentication form, analytics or network requests to the Auth A
 
 `node test_auth_return.cjs`: six privacy/state cases passed, including initial and repeat fragment visits, errors, recovery and DOM readiness. Live browser checks with synthetic tokens verified fragment clearing on repeat visits and expired-link messaging. No real signup or delivery was tested by those checks.
 
-Approval was requested to replace localhost with the prepared HTTPS Site URL. **Do not claim the Supabase URL was changed until the dashboard visibly confirms it.** The default return page is sufficient for manual confirmation-then-login; no extra redirect allowlist or deep-link handler is required for that limited flow. Secure automated login and working recovery remain separate work.
+The user approved replacing localhost, and the dashboard visibly confirmed the saved HTTPS Site URL. The default return page supports manual confirmation-then-login; no extra redirect allowlist or deep-link handler is required for that limited flow. Secure automated login and working recovery remain separate work.
 
 ## Complete before public registration acceptance
 
 1. User configures sender identity and provider SMTP directly in [SMTP settings](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/smtp). Confirm provider domain verification and delivery quotas. Do not silently purchase/upgrade services.
-2. Apply the approved Site URL in [URL configuration](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/url-configuration), then verify the saved value.
-3. With explicit authorization for a real test inbox, exercise native signup, email receipt, confirmation, return page and subsequent login. Then test duplicate email, expired/pending confirmation and resend. The original signup pending-confirmation UI still needs acceptance.
+2. Site URL was applied and verified in [URL configuration](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/url-configuration). Retain this HTTPS URL unless a verified replacement is approved.
+3. A real test inbox was requested after SMTP is saved. With explicit authorization, exercise native signup, email receipt, confirmation, return page and subsequent login. Then test duplicate email, expired/pending confirmation and resend. The original signup pending-confirmation UI still needs acceptance.
 4. Implement real password recovery/reset UX; sending the reset email alone is not sufficient. Verify account deletion/password-change routes and multi-device state before calling production ready.
 
 An earlier signup shell test was rejected by automatic approval review with only “blocked by policy.” It was not rerouted. Confirmed own database-fixture login tests do not verify account creation or email delivery. See [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for broader remaining acceptance.
