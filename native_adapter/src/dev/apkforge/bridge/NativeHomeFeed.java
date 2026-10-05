@@ -9,6 +9,8 @@ import java.util.concurrent.*;
 
 /** Provider collections rendered by the retained native Home feed. */
 final class NativeHomeFeed {
+    private static JSONArray snapshot;
+    private static long expires;
     private static final String[][] COLLECTIONS={
         {"popular","Popular This Week","range=week"},
         {"trending","Trending Today","range=today"},
@@ -33,7 +35,21 @@ final class NativeHomeFeed {
             .put("response_type","SERIES").put("title",title).put("ids",ids)
             .put("link","/content/v2/discover/apkforge-"+id);
     }
-    static JSONObject home()throws Exception {
+    static synchronized JSONObject home(int start,int limit)throws Exception {
+        // Hold subsequent pages in the same feed even when its freshness window expires.
+        // Refreshing in the middle of a scroll can reorder rows or repeat the hero.
+        if(snapshot==null||(start<=0&&expires<=android.os.SystemClock.elapsedRealtime())){
+            snapshot=load();expires=android.os.SystemClock.elapsedRealtime()+600000;
+        }
+        return page(snapshot,start,limit);
+    }
+    static JSONObject page(JSONArray feed,int start,int limit)throws Exception {
+        int offset=Math.max(0,start),count=Math.max(1,Math.min(100,limit));
+        JSONArray rows=new JSONArray();
+        for(int i=offset;i<feed.length()&&i-offset<count;i++)rows.put(feed.get(i));
+        return BackendBridge.envelope(rows).put("total",feed.length());
+    }
+    private static JSONArray load()throws Exception {
         ExecutorService pool=Executors.newFixedThreadPool(4);
         List<Future<JSONArray>> tasks=new ArrayList<>();
         try{
@@ -55,7 +71,7 @@ final class NativeHomeFeed {
                 feed.put(row);
             }
             if(feed.length()==0)throw new BackendBridge.HttpFailure(503,"catalog-unavailable");
-            return BackendBridge.envelope(feed);
+            return feed;
         }finally{pool.shutdownNow();}
     }
 }

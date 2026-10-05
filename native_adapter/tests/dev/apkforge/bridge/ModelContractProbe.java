@@ -76,6 +76,11 @@ public final class ModelContractProbe {
         check(((java.util.List<?>)call(feed,"getItemsIds")).size()==1&&call(feed,"getLink").equals("/content/v2/discover/apkforge-popular"),"Home must deduplicate records and exclude adult titles");checks++;
         check(NativeHomeFeed.query("popular").contains("range=week")&&NativeHomeFeed.query("movies").contains("format=MOVIE"),"View All must use the same collection filters");checks++;
         try{NativeHomeFeed.query("unknown");throw new AssertionError("Unknown collection must fail");}catch(BackendBridge.HttpFailure expected){check(expected.status==404,"Unknown collection status");checks++;}
+        org.json.JSONArray feedRows=new org.json.JSONArray().put(new JSONObject().put("id","hero")).put(new JSONObject().put("id","row-1")).put(new JSONObject().put("id","row-2"));
+        JSONObject firstPage=NativeHomeFeed.page(feedRows,0,2),secondPage=NativeHomeFeed.page(feedRows,2,2);
+        check(firstPage.getJSONArray("data").length()==2&&secondPage.getJSONArray("data").length()==1&&secondPage.getJSONArray("data").getJSONObject(0).getString("id").equals("row-2"),"Scrolling must not repeat the hero or earlier rows");checks++;
+        check(firstPage.getInt("total")==3&&secondPage.getInt("total")==3&&NativeHomeFeed.page(feedRows,3,2).getJSONArray("data").length()==0,"Home total and empty final page must terminate pagination");checks++;
+        check(NativeHomeFeed.page(feedRows,Integer.MAX_VALUE,Integer.MAX_VALUE).getJSONArray("data").length()==0&&NativeHomeFeed.page(feedRows,-1,0).getJSONArray("data").length()==1,"Home pagination bounds must not overflow or fail");checks++;
         JSONObject summary=new JSONObject(title.toString());summary.remove("episodeList");
         BackendBridge.cache(new org.json.JSONArray().put(summary));
         check(BackendBridge.series(154587).has("episodeList"),"Home summary refresh must retain loaded episodes");checks++;

@@ -20,8 +20,8 @@ from android_formats import ANDROID, decode_manifest, strings_pool
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_SHA256 = '9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1'
-BUILD_VERSION = '0.4.4'
-BUILD_CODE = 1000044
+BUILD_VERSION = '0.4.5'
+BUILD_CODE = 1000045
 
 
 def sha(data):

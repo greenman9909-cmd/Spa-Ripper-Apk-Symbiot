@@ -6,7 +6,9 @@ A local, dependency-free tool for inspecting Android APKs and recovering package
 
 The separate native migration keeps the supplied APK's original screen implementations and resources and adapts its backend to ani.pm catalog data and local guest profiles/lists. Native HLS playback has been tested for One Piece and Bleach episode 1 sub in the original Android player. Successful native Supabase login and complete backend migration remain unverified/unfinished. See [NATIVE_MIGRATION.md](NATIVE_MIGRATION.md) for the build recipe, 34 Android model-contract checks and limits.
 
-Current preview: [Original-UI-AniPM-v0.4.4.apk](https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot/releases/download/v0.4.4-native-preview/Original-UI-AniPM-v0.4.4.apk). Android App Info must show version **0.4.4**, code **1000044**. Earlier downloads all displayed the original 3.61.0 / 770 metadata. This packaging update makes installations identifiable; it does not claim to fix an unreproduced device-specific playback failure.
+Current preview: [Original-UI-AniPM-v0.4.5.apk](https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot/releases/download/v0.4.5-native-preview/Original-UI-AniPM-v0.4.5.apk). Android App Info must show version **0.4.5**, code **1000045**. This preview fixes Home response pagination so subsequent pages do not repeat the hero and earlier collections. Full UI scrolling and the reported device-specific title/video failure still need verification.
+
+**Continue here:** [AGENT_HANDOFF.md](AGENT_HANDOFF.md) contains verified behavior, unfinished features, prioritized acceptance checks, Supabase details, safe emulator instructions and the build/release procedure. Current validation: 44 Python tests and 37 original Android model contracts.
 
 ## Run the studio
 

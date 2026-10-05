@@ -153,7 +153,7 @@ public final class BackendBridge {
             String body=requestBody(loader,request);
             return profileContent(profiles(loader),uri,method,body.isEmpty()?new JSONObject():new JSONObject(body));
         }
-        if(path.endsWith("/home_feed")){NativeAccountState.initialize(loader);return NativeHomeFeed.home();}
+        if(path.endsWith("/home_feed")){NativeAccountState.initialize(loader);return NativeHomeFeed.home(integer(uri.getQueryParameter("start"),0),integer(uri.getQueryParameter("n"),25));}
         if(path.endsWith("/search")){
             String q=uri.getQueryParameter("q");if(q==null||q.trim().length()<2)return envelope(new JSONArray());
             JSONArray found=api("/titles?adult=0&limit=25&q="+URLEncoder.encode(q.trim(),"UTF-8")).getJSONArray("data");cache(found);

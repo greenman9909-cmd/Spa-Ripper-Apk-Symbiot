@@ -1,6 +1,6 @@
 # Original-screen Android migration — experimental
 
-This is an incomplete backend migration of the user-supplied Android 3.61.0 / 770 APK. The earlier reconstructed interface was rejected and is not included. The recipe keeps the original manifest, resource table, assets, native libraries and screen implementations, with six original backend/player integration classes hooked and a new adapter DEX appended.
+This is an incomplete backend migration of the user-supplied Android 3.61.0 / 770 APK. The earlier reconstructed interface was rejected and is not included. The recipe keeps original manifest semantics except root version attributes, resource table, assets, native libraries and screen implementations, with six original backend/player integration classes hooked and a new adapter DEX appended. Read [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for the current continuation plan.
 
 The supplied APK SHA-256 is `9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1`. This recipe deliberately rejects other inputs. APK filenames are not package identity: `server.py --inspect INPUT.apk --expected-package com.crunchyroll.crunchyroid` checks the decoded manifest.
 
