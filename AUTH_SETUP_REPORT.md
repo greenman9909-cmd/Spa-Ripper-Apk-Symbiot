@@ -21,7 +21,15 @@ The page has no authentication form, analytics or network requests to the Auth A
 
 The user approved replacing localhost, and the dashboard visibly confirmed the saved HTTPS Site URL. The default return page supports manual confirmation-then-login; no extra redirect allowlist or deep-link handler is required for that limited flow. Secure automated login and working recovery remain separate work.
 
-## Complete before public registration acceptance
+## Physical USB login diagnosis (2026-10-06)
+
+The user's existing physical-phone installation was updated from 0.4.6 to 0.4.7 with an in-place install preserving app data. App-scoped captures produced no matching crash trace; this does not prove that the reported navigation/playback bugs are fixed.
+
+For the reported login returning to the previous screen, a bounded project-log aggregate showed two HTTP 400 `email_not_confirmed` responses. A read-only account aggregate confirmed that the user's app account exists and is unconfirmed. No credentials, account identifiers, device serials or raw logs are included here.
+
+The user reported not having opened the confirmation email, then that its link failed or expired. With explicit authorization, one standard signup-confirmation resend was requested. Supabase returned HTTP 200; this verifies request acceptance only, not delivery, link validity or successful login. Custom SMTP was still visibly disabled. Next: user opens the newest email, completes confirmation, then logs into the phone themselves; verify Home before diagnosing scrolling/playback. Do not silently auto-confirm the account, reuse chat passwords or create a fake session. The generic original error UI still needs a clear, correctly mapped confirmation message.
+
+## Remaining registration acceptance
 
 1. User configures sender identity and provider SMTP directly in [SMTP settings](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/smtp). Confirm provider domain verification and delivery quotas. Do not silently purchase/upgrade services.
 2. Site URL was applied and verified in [URL configuration](https://supabase.com/dashboard/project/yhccrdatocqqniblpshm/auth/url-configuration). Retain this HTTPS URL unless a verified replacement is approved.
