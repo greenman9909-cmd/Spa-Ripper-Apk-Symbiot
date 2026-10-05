@@ -32,9 +32,7 @@ final class NativeCatalog {
                 JSONObject e=episodes.getJSONObject(i);if(e.getInt("number")!=wanted)continue;
                 JSONObject nativeEpisode=episode(title,e,dubbed);
                 if(path.contains("/up_next/")){
-                    JSONObject panel=new JSONObject().put("id",nativeEpisode.getString("id")).put("type","episode")
-                        .put("title",nativeEpisode.getString("title")).put("images",nativeEpisode.getJSONObject("images"))
-                        .put("episode_metadata",nativeEpisode);
+                    JSONObject panel=episodePanel(nativeEpisode);
                     return BackendBridge.envelope(new JSONArray().put(new JSONObject().put("panel",panel).put("playhead",0).put("never_watched",true).put("fully_watched",false)));
                 }
                 return BackendBridge.envelope(new JSONArray().put(nativeEpisode));
@@ -51,11 +49,17 @@ final class NativeCatalog {
         JSONArray episodes=title.optJSONArray("episodeList");
         if(episodes==null||episodes.length()==0)return BackendBridge.panel(title);
         JSONObject first=episode(title,episodes.getJSONObject(0));
-        return new JSONObject().put("id",first.getString("id")).put("type","episode")
-            .put("title",first.getString("title")).put("images",first.getJSONObject("images")).put("episode_metadata",first);
+        return episodePanel(first);
+    }
+    static JSONObject episodePanel(JSONObject episode)throws Exception {
+        return new JSONObject().put("id",episode.getString("id")).put("type","episode")
+            .put("title",episode.getString("title")).put("images",episode.getJSONObject("images"))
+            .put("streams_link",episode.getString("streams_link")).put("episode_metadata",episode);
     }
     private static JSONObject episode(JSONObject title,JSONObject episode,boolean dubbed)throws Exception {
         int id=title.getInt("anilistId"),n=episode.getInt("number");JSONObject available=episode.optJSONObject("available");if(available==null)available=new JSONObject();
+        dubbed=dubbed||(!available.optBoolean("sub")&&available.optBoolean("dub"));
+        if((dubbed&&!available.optBoolean("dub"))||(!dubbed&&!available.optBoolean("sub")))throw new BackendBridge.HttpFailure(404,"audio-version-unavailable");
         String image=episode.isNull("thumbnail")?title.optString("poster"):episode.optString("thumbnail");
         JSONObject source=new JSONObject().put("source",image).put("width",640).put("height",360);
         JSONObject images=new JSONObject().put("thumbnail",new JSONArray().put(new JSONArray().put(source)));

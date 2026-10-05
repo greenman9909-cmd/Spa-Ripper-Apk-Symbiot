@@ -9,11 +9,37 @@ import java.util.UUID;
 /** Replacement-backend guest profiles; never reads the original credential store. */
 final class LocalProfiles {
     private final SharedPreferences prefs;
+    final String cloudOwner;
+    private boolean cloudReady;
+    private static final java.util.concurrent.ExecutorService SYNC=java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.atomic.AtomicReference<JSONObject> pending=new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicBoolean syncing=new java.util.concurrent.atomic.AtomicBoolean();
     LocalProfiles(ClassLoader loader) throws Exception {
-        Context app=(Context)Class.forName("com.ellation.crunchyroll.application.e",true,loader).getMethod("b").invoke(null);
-        prefs=app.getSharedPreferences("apkforge_guest_profiles",Context.MODE_PRIVATE);
+        Context app=CloudSession.context(loader);cloudOwner=CloudSession.userId();
+        prefs=app.getSharedPreferences(cloudOwner.isEmpty()?"apkforge_guest_profiles":"apkforge_profiles_"+cloudOwner,Context.MODE_PRIVATE);
+        cloudReady=prefs.getBoolean("cloud_restored",false);
+        if(!cloudOwner.isEmpty()&&!cloudReady){
+            try{JSONObject saved=CloudSession.readSnapshot(cloudOwner);if(saved!=null){
+                // A failed first restore may have left local edits. Preserve both
+                // copies rather than silently overwrite either one on reconnect.
+                if(prefs.contains("profiles"))throw new java.io.IOException("Restore requires reconciliation");
+                JSONArray restored=new JSONArray(saved.getString("profiles"));
+                if(restored.length()<1||restored.length()>5)throw new java.io.IOException("Invalid profile snapshot");
+                java.util.HashSet<String> ids=new java.util.HashSet<>();
+                for(int i=0;i<restored.length();i++){
+                    JSONObject record=restored.getJSONObject(i);String id=record.getString("profile_id"),name=record.getString("profile_name").trim();
+                    if(!id.matches("[0-9a-fA-F-]{36}")||!ids.add(id)||name.isEmpty()||name.length()>32)throw new java.io.IOException("Invalid profile snapshot");
+                }
+                if(!ids.contains(saved.getString("selected")))throw new java.io.IOException("Invalid selected profile");
+                SharedPreferences.Editor edit=prefs.edit();java.util.Iterator<String> keys=saved.keys();
+                while(keys.hasNext()){String key=keys.next();if(allowed(key))edit.putString(key,saved.getString(key));}
+                if(!edit.commit())throw new java.io.IOException("Could not restore profiles");
+            }cloudReady=true;prefs.edit().putBoolean("cloud_restored",true).commit();}
+            catch(Exception e){android.util.Log.w("APKForgeCloud","Cloud profile restore unavailable; using device state without overwriting cloud");}
+        }
     }
     synchronized String accountId() {
+        if(!cloudOwner.isEmpty())return cloudOwner;
         String id=prefs.getString("account",null);
         if(id==null){id=UUID.randomUUID().toString();prefs.edit().putString("account",id).commit();}
         return id;
@@ -32,17 +58,18 @@ final class LocalProfiles {
     synchronized JSONObject state(String category) throws Exception {return new JSONObject(prefs.getString(category+":"+selectedId(),"{}"));}
     synchronized void saveState(String category,JSONObject state) throws Exception {
         if(!prefs.edit().putString(category+":"+selectedId(),state.toString()).commit())throw new java.io.IOException("Could not persist profile state");
+        sync();
     }
     synchronized void select(String id) throws Exception {
         JSONArray profiles=load();
         for(int i=0;i<profiles.length();i++)if(profiles.getJSONObject(i).getString("profile_id").equals(id)){
-            prefs.edit().putString("selected",id).commit();return;
+            prefs.edit().putString("selected",id).commit();sync();return;
         }
         throw new BackendBridge.HttpFailure(404,"profile-not-found");
     }
     synchronized JSONObject account() throws Exception {
         return new JSONObject().put("account_id",accountId()).put("external_id","0").put("created","2026-10-04T00:00:00Z")
-            .put("email","").put("phone","").put("has_password",false);
+            .put("email",cloudOwner.isEmpty()?"":CloudSession.email()).put("phone","").put("has_password",!cloudOwner.isEmpty());
     }
     synchronized JSONObject route(String path,String method,JSONObject body) throws Exception {
         JSONArray profiles=load();String selected=selectedId();
@@ -66,8 +93,10 @@ final class LocalProfiles {
             if(method.equals("PATCH")){apply(p,body);save(profiles);return new JSONObject();}
             if(method.equals("DELETE")){
                 if(p.optBoolean("is_primary")||profiles.length()==1)throw new BackendBridge.HttpFailure(409,"primary-profile-required");
-                profiles.remove(i);save(profiles);
-                if(id.equals(selected))prefs.edit().putString("selected",profiles.getJSONObject(0).getString("profile_id")).commit();
+                profiles.remove(i);SharedPreferences.Editor edit=prefs.edit().putString("profiles",profiles.toString());
+                if(id.equals(selected))edit.putString("selected",profiles.getJSONObject(0).getString("profile_id"));
+                for(String category:new String[]{"watchlist","playheads","ratings","custom-lists"})edit.remove(category+":"+id);
+                if(!edit.commit())throw new java.io.IOException("Could not delete profile state");sync();
                 return new JSONObject();
             }
         }
@@ -83,5 +112,17 @@ final class LocalProfiles {
     }
     private void save(JSONArray profiles) throws Exception {
         if(!prefs.edit().putString("profiles",profiles.toString()).commit())throw new java.io.IOException("Could not persist profiles");
+        sync();
+    }
+    private static boolean allowed(String key){return key.equals("profiles")||key.equals("selected")||key.matches("(?:watchlist|playheads|ratings|custom-lists):[0-9a-fA-F-]{36}");}
+    private void sync()throws Exception {
+        if(cloudOwner.isEmpty()||!cloudReady)return;JSONObject snapshot=new JSONObject();
+        for(java.util.Map.Entry<String,?> entry:prefs.getAll().entrySet())if(allowed(entry.getKey())&&entry.getValue() instanceof String)snapshot.put(entry.getKey(),entry.getValue());
+        pending.set(snapshot);
+        if(!syncing.compareAndSet(false,true))return;
+        SYNC.execute(()->{
+            try{JSONObject next;while((next=pending.getAndSet(null))!=null){try{CloudSession.writeSnapshot(cloudOwner,next);}catch(Exception e){android.util.Log.w("APKForgeCloud","Cloud sync unavailable; device state retained");}}}
+            finally{syncing.set(false);if(pending.get()!=null){try{synchronized(this){sync();}}catch(Exception ignored){}}}
+        });
     }
 }

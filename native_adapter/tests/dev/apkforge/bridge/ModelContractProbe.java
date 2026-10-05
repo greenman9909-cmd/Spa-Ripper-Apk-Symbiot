@@ -70,6 +70,27 @@ public final class ModelContractProbe {
         check(call(watchlistPanel,"getResourceType").toString().equals("episode")&&call(call(watchlistPanel,"getPanelMetadata"),"getParentId").equals("ANI154587"),"Watchlist row must expose episode image and series parent");checks++;
         check(BackendBridge.replacementHost("cr-play-service.prd.crunchyrollsvc.com"),"Native player uses a separate original service hostname");checks++;
         check(!BackendBridge.replacementHost("crunchyroll.com.example.invalid")&&!BackendBridge.replacementHost(null),"Replacement must not intercept unrelated domains");checks++;
+        org.json.JSONArray records=new org.json.JSONArray().put(title).put(title).put(new JSONObject(title.toString()).put("anilistId",99).put("adult",true));
+        Object feed=decode("com.ellation.crunchyroll.api.model.HomeFeedItemRaw",NativeHomeFeed.collection("popular","Popular This Week",records));
+        check((Boolean)call(feed,"isValid")&&call(feed,"getResourceType").toString().equals("CURATED_COLLECTION")&&call(feed,"getResponseType").toString().equals("SERIES"),"Original Home collection model");
+        check(((java.util.List<?>)call(feed,"getItemsIds")).size()==1&&call(feed,"getLink").equals("/content/v2/discover/apkforge-popular"),"Home must deduplicate records and exclude adult titles");checks++;
+        check(NativeHomeFeed.query("popular").contains("range=week")&&NativeHomeFeed.query("movies").contains("format=MOVIE"),"View All must use the same collection filters");checks++;
+        try{NativeHomeFeed.query("unknown");throw new AssertionError("Unknown collection must fail");}catch(BackendBridge.HttpFailure expected){check(expected.status==404,"Unknown collection status");checks++;}
+        JSONObject summary=new JSONObject(title.toString());summary.remove("episodeList");
+        BackendBridge.cache(new org.json.JSONArray().put(summary));
+        check(BackendBridge.series(154587).has("episodeList"),"Home summary refresh must retain loaded episodes");checks++;
+        check(call(watchlistPanel,"getStreamHref").equals("/apkforge/playback/ANI154587E1"),"A playable native Panel must retain its stream link");checks++;
+        Object onlyDub=decode("com.ellation.crunchyroll.model.Episode",NativeCatalog.episode(title,new JSONObject(providerEpisode.toString()).put("available",new JSONObject().put("sub",false).put("dub",true))));
+        check(call(onlyDub,"getAudioLocale").equals("en-US")&&call(onlyDub,"getId").equals("ANI154587E1D"),"Dub-only episodes must not advertise an unavailable Japanese asset");checks++;
         System.out.println("Native model contracts passed: "+checks);
+        if(args.length>0&&args[0].equals("--cloud-negative")){
+            try{CloudSession.signIn("native-contract@example.invalid","invalid-contract-password");throw new AssertionError("Unknown cloud user must not authenticate");}
+            catch(BackendBridge.HttpFailure expected){check(expected.status==400||expected.status==401,"Auth must reject invalid credentials");}
+            check(CloudSession.userId().isEmpty(),"Rejected login must not create a session");
+            Method request=CloudSession.class.getDeclaredMethod("request",String.class,String.class,JSONObject.class,String.class);request.setAccessible(true);
+            try{request.invoke(null,"/rest/v1/account_state?select=*","GET",null,null);throw new AssertionError("Public client key must not read private profiles");}
+            catch(java.lang.reflect.InvocationTargetException expected){check(expected.getCause() instanceof BackendBridge.HttpFailure,"Expected explicit private-data rejection");int status=((BackendBridge.HttpFailure)expected.getCause()).status;check(status==401||status==403,"Private snapshots must reject unauthenticated access");}
+            System.out.println("Live Supabase rejection checks passed: 2");
+        }
     }
 }

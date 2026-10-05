@@ -20,6 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial', default='emulator-5560')
     parser.add_argument('--expected-avd', default='APKForge_Original_UI')
+    parser.add_argument('--cloud-negative', action='store_true', help='Also verify live invalid-login and private-data rejection; creates no account')
     parser.add_argument('--sdk', type=Path, default=Path(os.environ.get('ANDROID_HOME', Path.home() / 'AppData/Local/Android/Sdk')))
     args = parser.parse_args()
     if not args.serial.startswith('emulator-'):
@@ -43,8 +44,8 @@ def main():
     run('adb', '-s', args.serial, 'push', ROOT / 'android-build/Original-UI-AniPM.apk', remote + '/app.apk')
     run('adb', '-s', args.serial, 'push', work / 'classes.dex', remote + '/probe.dex')
     result = run('adb', '-s', args.serial, 'shell', 'env', 'CLASSPATH=' + remote + '/app.apk:' + remote + '/probe.dex',
-                 'app_process', '/', 'dev.apkforge.bridge.ModelContractProbe', capture=True)
-    if 'Native model contracts passed: 23' not in result:
+                 'app_process', '/', 'dev.apkforge.bridge.ModelContractProbe', *(['--cloud-negative'] if args.cloud_negative else []), capture=True)
+    if 'Native model contracts passed: 29' not in result:
         raise RuntimeError('Native model contracts did not report success: ' + result)
     print(result.strip())
 
