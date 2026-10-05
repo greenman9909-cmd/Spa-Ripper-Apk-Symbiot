@@ -15,7 +15,7 @@ import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.net.ssl.HttpsURLConnection;
 
-/** Optional cloud session, independent of original-service credentials. */
+/** Required cloud session, independent of original-service credentials. */
 final class CloudSession {
     static final String URL_BASE="https://yhccrdatocqqniblpshm.supabase.co";
     // Public client identifier only. Database access is governed by user JWT + RLS.
@@ -55,6 +55,10 @@ final class CloudSession {
     }
     static synchronized String userId(){return session==null?"":session.optJSONObject("user").optString("id");}
     static synchronized String email(){return session==null?"":session.optJSONObject("user").optString("email");}
+    static void requireSession()throws Exception {token();}
+    private static void notice(String text){
+        try{Context app=context(CloudSession.class.getClassLoader());new android.os.Handler(android.os.Looper.getMainLooper()).post(()->android.widget.Toast.makeText(app,text,android.widget.Toast.LENGTH_LONG).show());}catch(Exception ignored){}
+    }
     static synchronized void signIn(String email,String password)throws Exception {
         if(email==null||password==null||email.trim().isEmpty()||password.isEmpty())throw new BackendBridge.HttpFailure(400,"missing-login-fields");
         JSONObject value=new JSONObject(request("/auth/v1/token?grant_type=password","POST",new JSONObject().put("email",email.trim()).put("password",password),null));
@@ -66,6 +70,7 @@ final class CloudSession {
         JSONObject response=new JSONObject(request("/auth/v1/signup","POST",new JSONObject().put("email",email).put("password",password),null));
         // Confirmation-enabled projects return a user without a session.
         if(!response.optString("access_token","").isEmpty()){validate(response);save(response);}
+        else{notice("Account created. Confirm the email from Supabase, then log in.");throw new BackendBridge.HttpFailure(409,"confirm-email-before-login");}
     }
     static void recover(String email)throws Exception {
         if(email==null||!email.contains("@"))throw new BackendBridge.HttpFailure(400,"invalid-email");
@@ -110,7 +115,17 @@ final class CloudSession {
         try{
             if(body!=null){byte[] bytes=body.toString().getBytes(StandardCharsets.UTF_8);connection.setDoOutput(true);connection.setRequestProperty("Content-Type","application/json");connection.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=connection.getOutputStream()){out.write(bytes);}}
             int status=connection.getResponseCode();
-            if(status<200||status>=300)throw new BackendBridge.HttpFailure(status,"cloud-request-failed");
+            if(status<200||status>=300){
+                String code="cloud-request-failed";
+                // Read only a bounded machine code. Never log returned credentials or account data.
+                try(InputStream error=connection.getErrorStream()){if(error!=null){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[512];int count;while((count=error.read(buffer))!=-1&&bytes.size()<8192)bytes.write(buffer,0,count);String returned=new JSONObject(new String(bytes.toByteArray(),StandardCharsets.UTF_8)).optString("code");if(returned.matches("[a-z_]{1,80}"))code=returned;}}catch(Exception ignored){}
+                if(path.startsWith("/auth/")){
+                    if(code.equals("email_not_confirmed"))notice("Confirm your email before logging in.");
+                    else if(code.equals("over_email_send_rate_limit")||code.equals("email_address_not_authorized"))notice("Signup email could not be sent. Supabase email delivery needs configuration.");
+                    else if(code.equals("user_already_exists"))notice("This account already exists. Log in instead.");
+                }
+                throw new BackendBridge.HttpFailure(status,code);
+            }
             try(InputStream in=connection.getInputStream()){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int count;
                 while((count=in.read(buffer))!=-1){if(bytes.size()+count>2*1024*1024)throw new IOException("Cloud response too large");bytes.write(buffer,0,count);}return new String(bytes.toByteArray(),StandardCharsets.UTF_8);}
         }finally{connection.disconnect();}

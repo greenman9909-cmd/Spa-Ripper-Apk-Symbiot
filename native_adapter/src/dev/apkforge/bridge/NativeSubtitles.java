@@ -49,17 +49,19 @@ public final class NativeSubtitles {
         String language=NativeMetadata.string(track,"language");if(language.isEmpty())language=NativeMetadata.string(track,"srclang");
         if(language.isEmpty())language=NativeMetadata.string(track,"locale");
         language=language.replace('_','-').toLowerCase(Locale.US);
+        if(language.equals("zh-hant")||label.contains("chinese")&&label.contains("traditional"))return "zh-TW";
+        if(language.equals("zh-hans"))return "zh-CN";
         if(label.contains("spanish")&&(label.contains("latin")||label.contains("latam")))return "es-419";
         if(label.contains("portuguese")&&label.contains("brazil"))return "pt-BR";
         if(language.isEmpty()||language.equals("und")){
-            String[] names={"english","spanish","portuguese","french","german","italian","arabic","russian","japanese","korean","chinese","hindi","turkish","indonesian","thai"};
-            String[] tags={"en","es","pt","fr","de","it","ar","ru","ja","ko","zh","hi","tr","id","th"};
+            String[] names={"english","spanish","portuguese","french","german","italian","arabic","russian","japanese","korean","chinese","hindi","turkish","indonesian","thai","vietnamese","polish","dutch","ukrainian","hebrew","bengali","tamil","telugu","malay","persian","swedish","danish","norwegian","finnish","romanian","hungarian","czech","greek","bulgarian","serbian"};
+            String[] tags={"en","es","pt","fr","de","it","ar","ru","ja","ko","zh","hi","tr","id","th","vi","pl","nl","uk","he","bn","ta","te","ms","fa","sv","da","no","fi","ro","hu","cs","el","bg","sr"};
             language="";for(int i=0;i<names.length;i++)if(label.startsWith(names[i])){language=tags[i];break;}
         }
         if(!language.matches("[a-z]{2,3}(?:-(?:[a-z]{2}|[0-9]{3}))?"))return "";
         if(language.contains("-")){String[] parts=language.split("-");return parts[0]+"-"+parts[1].toUpperCase(Locale.US);}
-        String[] base={"en","es","pt","fr","de","it","ar","ru","ja","ko","zh","hi","tr","id","th"};
-        String[] nativeTags={"en-US","es-ES","pt-PT","fr-FR","de-DE","it-IT","ar-SA","ru-RU","ja-JP","ko-KR","zh-CN","hi-IN","tr-TR","id-ID","th-TH"};
+        String[] base={"en","es","pt","fr","de","it","ar","ru","ja","ko","zh","hi","tr","id","th","vi","pl","nl","uk","he","bn","ta","te","ms","fa","sv","da","no","fi","ro","hu","cs","el","bg","sr"};
+        String[] nativeTags={"en-US","es-ES","pt-PT","fr-FR","de-DE","it-IT","ar-SA","ru-RU","ja-JP","ko-KR","zh-CN","hi-IN","tr-TR","id-ID","th-TH","vi-VN","pl-PL","nl-NL","uk-UA","he-IL","bn-BD","ta-IN","te-IN","ms-MY","fa-IR","sv-SE","da-DK","no-NO","fi-FI","ro-RO","hu-HU","cs-CZ","el-GR","bg-BG","sr-RS"};
         for(int i=0;i<base.length;i++)if(language.equals(base[i]))return nativeTags[i];
         return language.equals("und")?"":language;
     }

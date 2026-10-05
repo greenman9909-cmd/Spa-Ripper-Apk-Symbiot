@@ -6,7 +6,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.util.UUID;
 
-/** Replacement-backend guest profiles; never reads the original credential store. */
+/** Separate replacement account profiles; never reads original-service credentials. */
 final class LocalProfiles {
     private final SharedPreferences prefs;
     final String cloudOwner;
@@ -46,9 +46,15 @@ final class LocalProfiles {
     }
     private JSONArray load() throws Exception {
         String saved=prefs.getString("profiles",null);
-        if(saved!=null)return new JSONArray(saved);
+        if(saved!=null){
+            JSONArray records=new JSONArray(saved);boolean changed=false;
+            if(!cloudOwner.isEmpty())for(int i=0;i<records.length();i++){JSONObject p=records.getJSONObject(i);
+                if(p.optBoolean("is_primary")&&"Guest".equals(p.optString("profile_name"))&&"Guest".equals(p.optString("username"))){p.put("profile_name","Profile 1").put("username","Profile 1");changed=true;}}
+            if(changed)prefs.edit().putString("profiles",records.toString()).commit();return records;
+        }
         String id=UUID.randomUUID().toString();
-        JSONArray profiles=new JSONArray().put(new JSONObject().put("profile_id",id).put("profile_name","Guest").put("username","Guest")
+        String name=cloudOwner.isEmpty()?"Guest":"Profile 1";
+        JSONArray profiles=new JSONArray().put(new JSONObject().put("profile_id",id).put("profile_name",name).put("username",name)
             .put("avatar","default.png").put("wallpaper","default.png").put("maturity_rating","MATURE_CONTENT_DISABLED")
             .put("preferred_content_audio_language","ja-JP").put("preferred_content_subtitle_language","en-US")
             .put("preferred_communication_language","en-US").put("is_primary",true).put("can_switch",true));

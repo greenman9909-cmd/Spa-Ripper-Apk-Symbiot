@@ -20,8 +20,8 @@ from android_formats import ANDROID, decode_manifest, strings_pool
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_SHA256 = '9f44b888baf558269eb79a868854ee9f0004a11704df0eafa00d95453f0e87e1'
-BUILD_VERSION = '0.4.6'
-BUILD_CODE = 1000046
+BUILD_VERSION = '0.4.7'
+BUILD_CODE = 1000047
 
 
 def sha(data):
@@ -115,12 +115,13 @@ def main():
     paths = [
         ('s70/e.smali', 'inactive-client monitor'),
         ('com/ellation/crunchyroll/api/etp/OkHttpClientFactory.smali', 'backend adapter install'),
-        ('com/ellation/crunchyroll/api/etp/auth/SharedPreferencesTokenStorage.smali', 'optional local guest session for replacement backend'),
+        ('com/ellation/crunchyroll/api/etp/auth/SharedPreferencesTokenStorage.smali', 'required encrypted Supabase session for replacement backend'),
         ('cr/l.smali', 'replacement HLS stream resolver in original player backend'),
         ('cr/g.smali', 'HLS mapping into original native player models'),
         ('ll/a.smali', 'provider headers on original media data source'),
         ('do/b.smali', 'replacement avatar and wallpaper URL mapping in original picker'),
         ('gk/b.smali', 'WebVTT conversion for the retained local subtitle renderer'),
+        ('com/ellation/crunchyroll/ui/images/CloudflareImagesBuilder.smali', 'replacement artwork in original image URL builder'),
     ]
     for relative, reason in paths:
         path = copied[relative]
@@ -128,8 +129,19 @@ def main():
         if relative.startswith('s70/'):
             text = replace_method(text, 'public final b()V', '    .locals 0\n    return-void')
         elif relative.endswith('SharedPreferencesTokenStorage.smali'):
-            text = replace_method(text, 'public getRefreshToken()Ljava/lang/String;', '    .locals 1\n    const-string v0, "apkforge-local-guest"\n    return-object v0')
-            text = replace_method(text, 'public isPresent()Z', '    .locals 1\n    const/4 v0, 0x1\n    return v0')
+            text = replace_method(text, 'public getRefreshToken()Ljava/lang/String;', '    .locals 1\n    invoke-static {p0}, Ldev/apkforge/bridge/BackendBridge;->refreshMarker(Ljava/lang/Object;)Ljava/lang/String;\n    move-result-object v0\n    return-object v0')
+            text = replace_method(text, 'public isPresent()Z', '    .locals 1\n    invoke-static {p0}, Ldev/apkforge/bridge/BackendBridge;->signedIn(Ljava/lang/Object;)Z\n    move-result v0\n    return v0')
+        elif relative.endswith('CloudflareImagesBuilder.smali'):
+            signature='public build(Ljava/lang/String;Lcom/ellation/crunchyroll/ui/images/CloudflareImagesBuilder$ImageType;Ljava/util/List;)Ljava/lang/String;'
+            start=text.index('.method '+signature);end=text.index('.end method',start)
+            section=text[start:end];anchor=re.search(r'    \.locals \d+',section).group(0)
+            section=section.replace(anchor,anchor+'''
+    invoke-static {p1, p2}, Ldev/apkforge/bridge/NativeArtwork;->url(Ljava/lang/String;Ljava/lang/Object;)Ljava/lang/String;
+    move-result-object v0
+    if-eqz v0, :apkforge_original_image
+    return-object v0
+    :apkforge_original_image''',1)
+            text=text[:start]+section+text[end:]
         elif relative == 'cr/l.smali':
             text = replace_method(text, 'public final k(Lcom/ellation/crunchyroll/model/PlayableAsset;ZLzc0/d;)Ljava/io/Serializable;', '''    .locals 1
     invoke-static {p1, p3}, Ldev/apkforge/bridge/NativePlayback;->streamsAsync(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;

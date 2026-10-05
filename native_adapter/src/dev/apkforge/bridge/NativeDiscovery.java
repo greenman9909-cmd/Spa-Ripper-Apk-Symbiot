@@ -11,7 +11,7 @@ final class NativeDiscovery {
     private static final int PAGE_SIZE=50;
     private static final String[] GENRES={"Action","Adventure","Comedy","Drama","Fantasy","Horror","Mahou Shoujo","Mecha","Music","Mystery","Psychological","Romance","Sci-Fi","Slice of Life","Sports","Supernatural","Thriller"};
     private static final String[] SEASONS={"WINTER","SPRING","SUMMER","FALL"};
-    private static final String QUERY="query($page:Int,$search:String,$genres:[String],$sort:[MediaSort],$season:MediaSeason,$year:Int,$status:MediaStatus){Page(page:$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,isAdult:false,search:$search,genre_in:$genres,sort:$sort,season:$season,seasonYear:$year,status:$status){id idMal title{english romaji native}description(asHtml:false) coverImage{large}bannerImage episodes genres status season seasonYear isAdult}}}";
+    private static final String QUERY="query($page:Int,$search:String,$genres:[String],$sort:[MediaSort],$season:MediaSeason,$year:Int,$status:MediaStatus){Page(page:$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,isAdult:false,search:$search,genre_in:$genres,sort:$sort,season:$season,seasonYear:$year,status:$status){id idMal title{english romaji native}description(asHtml:false) coverImage{extraLarge large}bannerImage episodes genres status season seasonYear isAdult}}}";
     static boolean handles(String path){return path.endsWith("/search")||path.endsWith("/browse")||path.endsWith("/browse/index")||path.contains("/categories")||path.endsWith("/seasonal_tags");}
     static int integer(String value,int fallback){try{return Integer.parseInt(value);}catch(Exception e){return fallback;}}
     static JSONObject variables(Uri uri)throws Exception {
@@ -67,10 +67,11 @@ final class NativeDiscovery {
         String description=NativeMetadata.string(media,"description").replaceAll("(?i)<br\\s*/?>","\n").replaceAll("<[^>]*>","");
         return new JSONObject().put("anilistId",media.getInt("id")).put("malId",media.optInt("idMal"))
             .put("title",name).put("nativeTitle",NativeMetadata.string(title,"native")).put("synopsis",description)
-            .put("poster",media.getJSONObject("coverImage").optString("large","")).put("banner",media.opt("bannerImage"))
+            .put("poster",cover(media)).put("banner",NativeMetadata.string(media,"bannerImage"))
             .put("genres",media.optJSONArray("genres")).put("status",media.optString("status")).put("adult",media.optBoolean("isAdult"))
             .put("episodes",new JSONObject().put("total",media.optInt("episodes"))).put("metadataOnly",true);
     }
+    static String cover(JSONObject media){JSONObject image=media.optJSONObject("coverImage");if(image==null)return "";String xl=NativeMetadata.string(image,"extraLarge");return xl.isEmpty()?NativeMetadata.string(image,"large"):xl;}
     static String genreId(String genre){return genre.toLowerCase(Locale.US).replace(' ','-');}
     static JSONObject categories()throws Exception {
         JSONArray items=new JSONArray();for(String genre:GENRES)items.put(new JSONObject().put("id",genreId(genre))

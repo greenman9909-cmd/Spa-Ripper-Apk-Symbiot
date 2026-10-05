@@ -21,7 +21,13 @@ final class NativeHomeFeed {
         {"adventure","Adventure","range=all&genre=Adventure"},
         {"fantasy","Fantasy","range=all&genre=Fantasy"},
         {"airing","Currently Airing",""},
-        {"season","New This Season",""}
+        {"season","New This Season",""},
+        {"comedy","Comedy","range=all&genre=Comedy"},
+        {"romance","Romance","range=all&genre=Romance"},
+        {"drama","Drama","range=all&genre=Drama"},
+        {"scifi","Science Fiction","range=all&genre=Sci-Fi"},
+        {"mystery","Mystery","range=all&genre=Mystery"},
+        {"sports","Sports","range=all&genre=Sports"}
     };
     static String query(String id)throws BackendBridge.HttpFailure {
         for(String[] c:COLLECTIONS)if(c[0].equals(id))return "/top?"+c[2]+"&adult=0&limit=100";
@@ -39,7 +45,7 @@ final class NativeHomeFeed {
     }
     static JSONObject collection(String id,String title,JSONArray records)throws Exception {
         JSONArray ids=new JSONArray();LinkedHashSet<Integer> unique=new LinkedHashSet<>();
-        for(int i=0;i<records.length()&&unique.size()<20;i++){
+        for(int i=0;i<records.length()&&unique.size()<32;i++){
             JSONObject record=records.getJSONObject(i);int key=record.optInt("anilistId");
             if(key>0&&!record.optBoolean("adult")&&unique.add(key))ids.put("ANI"+key);
         }
@@ -51,7 +57,10 @@ final class NativeHomeFeed {
         // Hold subsequent pages in the same feed even when its freshness window expires.
         // Refreshing in the middle of a scroll can reorder rows or repeat the hero.
         if(snapshot==null||(start<=0&&expires<=android.os.SystemClock.elapsedRealtime())){
-            snapshot=load();expires=android.os.SystemClock.elapsedRealtime()+600000;
+            for(String[] c:COLLECTIONS)if(!c[2].isEmpty())BackendBridge.invalidate(query(c[0]).replace("limit=100","limit=32"));
+            NativeMetadata.invalidateDiscovery();
+            try{snapshot=load();expires=android.os.SystemClock.elapsedRealtime()+15000;}
+            catch(Exception unavailable){if(snapshot==null)throw unavailable;expires=android.os.SystemClock.elapsedRealtime()+15000;}
         }
         return page(snapshot,start,limit);
     }
@@ -65,11 +74,18 @@ final class NativeHomeFeed {
         ExecutorService pool=Executors.newFixedThreadPool(4);
         List<Future<JSONArray>> tasks=new ArrayList<>();
         try{
-            for(String[] c:COLLECTIONS){final String id=c[0];tasks.add(pool.submit(()->id.equals("airing")||id.equals("season")?NativeDiscovery.feed(id):BackendBridge.api(query(id).replace("limit=100","limit=20")).getJSONArray("data")));}
+            for(String[] c:COLLECTIONS){final String id=c[0];tasks.add(pool.submit(()->id.equals("airing")||id.equals("season")?NativeDiscovery.feed(id):BackendBridge.api(query(id).replace("limit=100","limit=32")).getJSONArray("data")));}
             JSONArray feed=new JSONArray();
+            List<JSONArray> collections=new ArrayList<>();JSONArray artwork=new JSONArray();
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30);
             for(int i=0;i<COLLECTIONS.length;i++){
                 JSONArray records;
-                try{records=tasks.get(i).get(40,TimeUnit.SECONDS);}catch(ExecutionException|TimeoutException e){continue;}
+                try{records=tasks.get(i).get(Math.max(1,deadline-System.nanoTime()),TimeUnit.NANOSECONDS);}catch(ExecutionException|TimeoutException e){records=new JSONArray();}
+                collections.add(records);for(int j=0;j<records.length();j++)artwork.put(records.get(j));
+            }
+            try{NativeMetadata.artwork(artwork);}catch(Exception optional){android.util.Log.w("APKForgeMetadata","Home artwork refresh unavailable; keeping catalog artwork");}
+            for(int i=0;i<COLLECTIONS.length;i++){
+                JSONArray records=collections.get(i);
                 BackendBridge.cache(records);JSONObject row=collection(COLLECTIONS[i][0],COLLECTIONS[i][1],records);
                 if(row.getJSONArray("ids").length()==0)continue;
                 if(feed.length()==0){

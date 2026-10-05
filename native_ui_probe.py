@@ -56,6 +56,9 @@ def main():
         for node in tree.iter('node'):
             if node.get(attr) != value or node.get('package') != PACKAGE:
                 continue
+            visible = tuple(map(int, re.findall(r'\d+', node.get('bounds', ''))))
+            if len(visible) != 4 or visible[2] <= visible[0] or visible[3] <= visible[1]:
+                continue
             candidate = node
             while candidate is not None and candidate.get('clickable') != 'true':
                 candidate = parents.get(candidate)

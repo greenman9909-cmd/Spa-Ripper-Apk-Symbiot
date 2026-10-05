@@ -38,6 +38,13 @@ public final class BackendBridge {
         if(profiles==null||!profiles.cloudOwner.equals(CloudSession.userId()))profiles=new LocalProfiles(loader);return profiles;
     }
     private BackendBridge() {}
+    /** Reads encrypted session state only; never performs network I/O on startup. */
+    public static String refreshMarker(Object storage){
+        try{CloudSession.init(storage.getClass().getClassLoader());return CloudSession.userId().isEmpty()?null:"apkforge-cloud-session";}
+        catch(Exception unavailable){return null;}
+    }
+    public static boolean signedIn(Object storage){return refreshMarker(storage)!=null;}
+    static JSONObject cachedTitle(int id){synchronized(titles){return titles.get(id);}}
     static synchronized String preferredSubtitleLanguage(){
         try{return profiles==null?"en-US":profiles.route("/accounts/v1/me/multiprofile/"+profiles.selectedId(),"GET",new JSONObject()).optString("preferred_content_subtitle_language","en-US");}
         catch(Exception unavailable){return "en-US";}
@@ -89,6 +96,9 @@ public final class BackendBridge {
     }
     private static JSONObject route(ClassLoader loader,Object request,Uri uri) throws Exception {
         String path=uri.getPath();
+        if(path.startsWith("/content/v2/")||path.startsWith("/talkbox/")||path.contains("/accounts/v1/me")){
+            CloudSession.init(loader);CloudSession.requireSession();
+        }
         if(path.contains("config_delta"))return new JSONObject().put("config_delta",new JSONObject());
         if(path.endsWith("index/v2"))return new JSONObject().put("service_available",true);
         if(path.matches("/assets/v2/[^/]+/(avatar|wallpaper)"))return NativeAssets.catalog();
@@ -139,8 +149,10 @@ public final class BackendBridge {
             if("password".equals(grant)){
                 CloudSession.init(loader);CloudSession.signIn(form.getQueryParameter("username"),form.getQueryParameter("password"));
             }else if(!"refresh_token".equals(grant)&&!"refresh_token_profile_id".equals(grant)&&!"client_id".equals(grant))throw new HttpFailure(501,"login-method-not-configured");
+            CloudSession.init(loader);
+            if(!"client_id".equals(grant))CloudSession.requireSession();
             LocalProfiles p=profiles(loader);String id=form.getQueryParameter("profile_id");if(id!=null)p.select(id);
-            return new JSONObject().put("access_token","apkforge-local-guest").put("refresh_token","apkforge-local-guest")
+            return new JSONObject().put("access_token","apkforge-cloud-session").put("refresh_token","apkforge-cloud-session")
                 .put("token_type","Bearer").put("expires_in",3600).put("country","FR").put("scope","offline_access")
                 .put("account_id",p.accountId()).put("profile_id",p.selectedId());
         }
@@ -243,11 +255,16 @@ public final class BackendBridge {
         JSONObject t=data.getJSONObject(i);int id=t.getInt("anilistId");JSONObject existing=titles.get(id);
         // Summary refreshes must not discard the already loaded episode list.
         if(existing==null||!existing.has("episodeList")||t.has("episodeList"))titles.put(id,t);
+        else{
+            JSONObject merged=new JSONObject(existing.toString());
+            for(String key:new String[]{"poster","banner","title","nativeTitle","synopsis","genres","status"})if(!t.isNull(key))merged.put(key,t.get(key));
+            titles.put(id,merged);
+        }
     }}}
     static JSONObject envelope(JSONArray data)throws Exception{return new JSONObject().put("data",data).put("total",data.length()).put("meta",new JSONObject());}
     static JSONObject panel(JSONObject title)throws Exception{
         JSONObject ep=title.optJSONObject("episodes");if(ep==null)ep=new JSONObject();
-        JSONObject tall=new JSONObject().put("source",title.optString("poster")).put("height",900).put("width",600).put("type","poster_tall");
+        JSONObject tall=new JSONObject().put("source",NativeMetadata.string(title,"poster")).put("height",900).put("width",600).put("type","poster_tall");
         boolean hasBanner=!title.isNull("banner")&&!title.optString("banner").isEmpty();
         // poster_wide is the original native screen's cropped presentation.
         // Supplying portrait dimensions here expands its hero to a full poster.
@@ -255,17 +272,32 @@ public final class BackendBridge {
         JSONObject images=new JSONObject().put("poster_tall",new JSONArray().put(new JSONArray().put(tall))).put("poster_wide",new JSONArray().put(new JSONArray().put(wide)));
         JSONArray audio=new JSONArray();if(ep.optInt("sub")>0)audio.put("ja-JP");if(ep.optInt("dub")>0)audio.put("en-US");
         JSONArray maturity=new JSONArray();if(!title.optString("rating","").isEmpty())maturity.put(title.getString("rating"));
-        JSONObject metadata=new JSONObject().put("season_count",1).put("episode_count",ep.optInt("total")).put("is_subbed",ep.optInt("sub")>0).put("is_dubbed",ep.optInt("dub")>0).put("maturity_ratings",maturity).put("audio_locales",audio).put("subtitle_locales",new JSONArray());
+        JSONObject metadata=new JSONObject().put("season_count",NativeCatalog.seasonNumbers(title).size()).put("episode_count",ep.optInt("total")).put("is_subbed",ep.optInt("sub")>0).put("is_dubbed",ep.optInt("dub")>0).put("maturity_ratings",maturity).put("audio_locales",audio).put("subtitle_locales",new JSONArray());
         return new JSONObject().put("id","ANI"+title.getInt("anilistId")).put("type","series").put("title",title.optString("title")).put("description",title.optString("synopsis")).put("images",images).put("series_metadata",metadata).put("channel_id","crunchyroll");
     }
     static JSONObject series(int id)throws Exception {
         JSONObject title;synchronized(titles){title=titles.get(id);}
-        if(title!=null&&title.has("episodeList"))return title;
-        title=api("/series/"+id+"?adult=0").getJSONObject("data");NativeMetadata.enrich(title);synchronized(titles){titles.put(id,title);}return title;
+        if(title!=null&&title.has("episodeList")&&(!title.has("_detailsLoadedAt")||android.os.SystemClock.elapsedRealtime()-title.optLong("_detailsLoadedAt")<120000))return title;
+        try{JSONObject fresh=api("/series/"+id+"?adult=0").getJSONObject("data");NativeSeasons.apply(fresh,null);NativeMetadata.enrich(fresh);fresh.put("_detailsLoadedAt",android.os.SystemClock.elapsedRealtime());synchronized(titles){titles.put(id,fresh);trimDetails();}return fresh;}
+        catch(java.io.IOException unavailable){if(title!=null&&title.has("episodeList"))return title;throw unavailable;}
     }
+    static void trimDetails()throws Exception {
+        int count=0;for(JSONObject record:titles.values())if(record.has("episodeList"))count++;
+        for(Map.Entry<Integer,JSONObject> entry:titles.entrySet()){
+            if(count<=8)break;JSONObject record=entry.getValue();if(!record.has("episodeList"))continue;
+            JSONObject summary=new JSONObject();java.util.Iterator<String> keys=record.keys();
+            while(keys.hasNext()){String key=keys.next();if(!key.equals("episodeList")&&!key.equals("_detailsLoadedAt"))summary.put(key,record.get(key));}
+            entry.setValue(summary);count--;
+        }
+    }
+    static void trimResponses(){
+        long chars=0;for(CachedResponse record:responses.values())chars+=record.json.length();
+        java.util.Iterator<CachedResponse> oldest=responses.values().iterator();while(chars>4*1024*1024&&oldest.hasNext()){chars-=oldest.next().json.length();oldest.remove();}
+    }
+    static void invalidate(String path){synchronized(responses){responses.remove(path);}}
     static JSONObject api(String path)throws Exception{
         synchronized(responses){CachedResponse hit=responses.get(path);if(hit!=null&&hit.expires>android.os.SystemClock.elapsedRealtime())return new JSONObject(hit.json);}
         HttpsURLConnection c=(HttpsURLConnection)new URL(BASE+path).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(20000);c.setRequestProperty("User-Agent","APKForge/0.4 (Android)");c.setRequestProperty("Accept","application/json");
-        try{if(c.getResponseCode()!=200)throw new java.io.IOException("Provider HTTP "+c.getResponseCode());try(InputStream in=c.getInputStream()){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>8*1024*1024)throw new java.io.IOException("Catalog response too large");bytes.write(buffer,0,n);}String json=new String(bytes.toByteArray(),StandardCharsets.UTF_8);JSONObject result=new JSONObject(json);synchronized(responses){responses.put(path,new CachedResponse(json));}return result;}}finally{c.disconnect();}
+        try{if(c.getResponseCode()!=200)throw new java.io.IOException("Provider HTTP "+c.getResponseCode());try(InputStream in=c.getInputStream()){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>8*1024*1024)throw new java.io.IOException("Catalog response too large");bytes.write(buffer,0,n);}String json=new String(bytes.toByteArray(),StandardCharsets.UTF_8);JSONObject result=new JSONObject(json);synchronized(responses){responses.put(path,new CachedResponse(json));trimResponses();}return result;}}finally{c.disconnect();}
     }
 }

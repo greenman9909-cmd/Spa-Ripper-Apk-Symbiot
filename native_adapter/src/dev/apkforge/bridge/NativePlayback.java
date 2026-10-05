@@ -158,7 +158,8 @@ public final class NativePlayback {
     private static void appendTracks(JSONArray target,JSONArray source){if(source!=null)for(int i=0;i<Math.min(32,source.length());i++)target.put(source.opt(i));}
     static String hardLocale(JSONObject source){String value=NativeMetadata.string(source,"hardsub_locale");if(value.isEmpty())value=NativeMetadata.string(source,"hardsubLocale");try{return value.isEmpty()?"":NativeSubtitles.locale(new JSONObject().put("language",value));}catch(Exception e){return "";}}
     static JSONArray subtitleLocales(String asset)throws Exception {
-        synchronized(CACHE){Cached cached=CACHE.get(asset+":"+BackendBridge.preferredSubtitleLanguage());if(cached!=null){JSONObject data=new JSONObject(cached.json);JSONArray languages=new JSONArray();java.util.Iterator<String> keys=data.getJSONObject("subtitles").keys();while(keys.hasNext())languages.put(keys.next());String hard=data.getJSONObject("streams").getJSONObject("adaptive_hls").getJSONObject("").optString("hardsub_locale");if(!hard.isEmpty())languages.put(hard);return languages;}}
+        String language=BackendBridge.preferredSubtitleLanguage();
+        synchronized(CACHE){Cached cached=CACHE.get(asset+":"+language);if(cached!=null){JSONObject data=new JSONObject(cached.json);JSONArray languages=new JSONArray();java.util.Iterator<String> keys=data.getJSONObject("subtitles").keys();while(keys.hasNext())languages.put(keys.next());String hard=data.getJSONObject("streams").getJSONObject("adaptive_hls").getJSONObject("").optString("hardsub_locale");if(!hard.isEmpty())languages.put(hard);return languages;}}
         return new JSONArray();
     }
     static Object model(String cls,JSONObject json)throws Exception {

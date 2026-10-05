@@ -10,18 +10,20 @@ import java.util.regex.Pattern;
 final class NativeCatalog {
     private static final Pattern ID=Pattern.compile("ANI([0-9]+)(?:S([0-9]+)|E([0-9]+)(D)?)?");
     static boolean handles(String path){return path.contains("/cms/series/")||path.contains("/cms/seasons/")||path.contains("/cms/episodes/")||path.contains("/up_next/");}
+    static java.util.TreeSet<Integer> seasonNumbers(JSONObject title){return NativeSeasons.numbers(title);}
     static JSONObject route(Uri uri)throws Exception {
         String path=uri.getPath();Matcher match=ID.matcher(path);
         if(!match.find())throw new BackendBridge.HttpFailure(404,"title-not-found");
         int number=Integer.parseInt(match.group(1));JSONObject title=BackendBridge.series(number);
         JSONArray episodes=title.optJSONArray("episodeList");if(episodes==null)episodes=new JSONArray();
         if(path.endsWith("/seasons")){
-            JSONObject season=new JSONObject().put("id","ANI"+number+"S1").put("series_id","ANI"+number).put("channel_id","crunchyroll")
-                .put("title",title.optString("title")).put("season_number","1").put("season_display_number","1").put("number_of_episodes",episodes.length());
-            return BackendBridge.envelope(new JSONArray().put(season)).put("meta",new JSONObject().put("versions_considered",false));
+            JSONArray seasons=new JSONArray();for(int group:seasonNumbers(title)){int count=0;for(int i=0;i<episodes.length();i++)if(NativeSeasons.number(episodes.getJSONObject(i))==group)count++;
+                seasons.put(new JSONObject().put("id","ANI"+number+"S"+group).put("series_id","ANI"+number).put("channel_id","crunchyroll")
+                    .put("title",title.optString("title")+" — Season "+group).put("season_number",String.valueOf(group)).put("season_display_number",String.valueOf(group)).put("number_of_episodes",count));}
+            return BackendBridge.envelope(seasons).put("meta",new JSONObject().put("versions_considered",false));
         }
         if(path.endsWith("/episodes")){
-            JSONArray data=new JSONArray();for(int i=0;i<episodes.length();i++)data.put(episode(title,episodes.getJSONObject(i)));
+            int group=match.group(2)==null?1:Integer.parseInt(match.group(2));JSONArray data=new JSONArray();for(int i=0;i<episodes.length();i++){JSONObject e=episodes.getJSONObject(i);if(NativeSeasons.number(e)==group)data.put(episode(title,e));}
             return BackendBridge.envelope(data);
         }
         if(path.contains("/cms/episodes/")||path.contains("/up_next/")){
@@ -57,7 +59,7 @@ final class NativeCatalog {
             .put("streams_link",episode.getString("streams_link")).put("episode_metadata",episode);
     }
     private static JSONObject episode(JSONObject title,JSONObject episode,boolean dubbed)throws Exception {
-        int id=title.getInt("anilistId"),n=episode.getInt("number");JSONObject available=episode.optJSONObject("available");if(available==null)available=new JSONObject();
+        int id=title.getInt("anilistId"),n=episode.getInt("number"),season=NativeSeasons.number(episode);JSONObject available=episode.optJSONObject("available");if(available==null)available=new JSONObject();
         dubbed=dubbed||(!available.optBoolean("sub")&&available.optBoolean("dub"));
         if((dubbed&&!available.optBoolean("dub"))||(!dubbed&&!available.optBoolean("sub")))throw new BackendBridge.HttpFailure(404,"audio-version-unavailable");
         String image=episode.isNull("thumbnail")?title.optString("poster"):episode.optString("thumbnail");
@@ -65,12 +67,12 @@ final class NativeCatalog {
         JSONObject images=new JSONObject().put("thumbnail",new JSONArray().put(new JSONArray().put(source)));
         String name=episode.isNull("title")?"Episode "+n:episode.optString("title","Episode "+n);
         String base="ANI"+id+"E"+n;JSONArray versions=new JSONArray();
-        if(available.optBoolean("sub"))versions.put(version(base,id,"ja-JP",true));
-        if(available.optBoolean("dub"))versions.put(version(base+"D",id,"en-US",!available.optBoolean("sub")));
+        if(available.optBoolean("sub"))versions.put(version(base,id,season,"ja-JP",true));
+        if(available.optBoolean("dub"))versions.put(version(base+"D",id,season,"en-US",!available.optBoolean("sub")));
         String asset=dubbed?base+"D":base;
         return new JSONObject().put("id",asset).put("title",name).put("description",episode.optString("description","")).put("images",images)
-            .put("series_id","ANI"+id).put("series_title",title.optString("title")).put("season_id","ANI"+id+"S1")
-            .put("season_title",title.optString("title")).put("season_number","1").put("season_display_number","1")
+            .put("series_id","ANI"+id).put("series_title",title.optString("title")).put("season_id","ANI"+id+"S"+season)
+            .put("season_title",title.optString("title")+" — Season "+season).put("season_number",String.valueOf(season)).put("season_display_number",String.valueOf(season))
             .put("episode",String.valueOf(n)).put("episode_number",String.valueOf(n)).put("duration_ms",episode.optLong("runtimeSeconds")*1000)
             .put("is_subbed",!dubbed).put("is_dubbed",dubbed).put("is_premium_only",false)
             // Provider marks this audio available now. These are adapter access
@@ -83,8 +85,8 @@ final class NativeCatalog {
             .put("maturity_ratings",new JSONArray()).put("tenant_categories",new JSONArray())
             .put("streams_link","/apkforge/playback/"+asset);
     }
-    private static JSONObject version(String asset,int series,String locale,boolean original)throws Exception {
-        return new JSONObject().put("guid",asset).put("season_guid","ANI"+series+"S1").put("audio_locale",locale)
+    private static JSONObject version(String asset,int series,int season,String locale,boolean original)throws Exception {
+        return new JSONObject().put("guid",asset).put("season_guid","ANI"+series+"S"+season).put("audio_locale",locale)
             .put("original",original).put("variant","").put("is_premium_only",false);
     }
 }
