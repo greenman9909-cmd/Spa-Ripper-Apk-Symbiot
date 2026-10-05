@@ -93,9 +93,25 @@ public final class ModelContractProbe {
         check(firstPage.getJSONArray("data").length()==2&&secondPage.getJSONArray("data").length()==1&&secondPage.getJSONArray("data").getJSONObject(0).getString("id").equals("row-2"),"Scrolling must not repeat the hero or earlier rows");checks++;
         check(firstPage.getInt("total")==3&&secondPage.getInt("total")==3&&NativeHomeFeed.page(feedRows,3,2).getJSONArray("data").length()==0,"Home total and empty final page must terminate pagination");checks++;
         check(NativeHomeFeed.page(feedRows,Integer.MAX_VALUE,Integer.MAX_VALUE).getJSONArray("data").length()==0&&NativeHomeFeed.page(feedRows,-1,0).getJSONArray("data").length()==1,"Home pagination bounds must not overflow or fail");checks++;
+        java.util.Set<Integer> homeIds=new java.util.LinkedHashSet<>();
+        org.json.JSONArray selected=NativeHomeFeed.select(records,homeIds,14);
+        check(selected.length()==1&&homeIds.size()==1,"Home selection excludes repeated and adult cards");checks++;
+        org.json.JSONArray other=NativeHomeFeed.select(new org.json.JSONArray().put(title).put(new JSONObject(title.toString()).put("anilistId",20)).put(new JSONObject(title.toString()).put("anilistId",21)),homeIds,1);
+        check(other.length()==1&&other.getJSONObject(0).getInt("anilistId")==20&&!homeIds.contains(21),"Home rows exclude IDs from earlier rows without claiming unseen cards");checks++;
+        java.lang.reflect.Field active=NativeHomeFeed.class.getDeclaredField("snapshot"),ready=NativeHomeFeed.class.getDeclaredField("refreshed"),expiry=NativeHomeFeed.class.getDeclaredField("expires");
+        active.setAccessible(true);ready.setAccessible(true);expiry.setAccessible(true);
+        active.set(null,feedRows);ready.set(null,new org.json.JSONArray().put(new JSONObject().put("id","new-hero")).put(new JSONObject().put("id","new-row-1")).put(new JSONObject().put("id","new-row-2")));expiry.setLong(null,Long.MAX_VALUE);
+        check(NativeHomeFeed.home(2,2).getJSONArray("data").getJSONObject(0).getString("id").equals("row-2"),"Completed refresh must not replace an active scroll's later pages");checks++;
+        check(NativeHomeFeed.home(0,2).getJSONArray("data").getJSONObject(0).getString("id").equals("new-hero")&&NativeHomeFeed.home(2,2).getJSONArray("data").getJSONObject(0).getString("id").equals("new-row-2"),"A new feed starts with the completed refresh and keeps coherent pagination");checks++;
+        java.lang.reflect.Field pending=NativeHomeFeed.class.getDeclaredField("loading");pending.setAccessible(true);
+        pending.set(null,new java.util.concurrent.FutureTask<org.json.JSONArray>(() -> {throw new AssertionError("Fixture refresh must not run");}));expiry.setLong(null,0);
+        java.util.concurrent.ExecutorService caller=java.util.concurrent.Executors.newSingleThreadExecutor();
+        try{check(caller.submit(() -> NativeHomeFeed.home(0,2)).get(1,java.util.concurrent.TimeUnit.SECONDS).getJSONArray("data").getJSONObject(0).getString("id").equals("new-hero"),"A warm Home must return the current page while a network refresh is pending");checks++;}
+        finally{caller.shutdownNow();pending.set(null,null);active.set(null,null);ready.set(null,null);expiry.setLong(null,0);}
         JSONObject summary=new JSONObject(title.toString());summary.remove("episodeList");
         BackendBridge.cache(new org.json.JSONArray().put(summary));
         check(BackendBridge.series(154587).has("episodeList"),"Home summary refresh must retain loaded episodes");checks++;
+        check(BackendBridge.series(154587).getJSONArray("episodeList")==title.getJSONArray("episodeList"),"Summary updates must preserve the loaded episode array without cloning it under the image-cache lock");checks++;
         check(call(watchlistPanel,"getStreamHref").equals("/apkforge/playback/ANI154587E1"),"A playable native Panel must retain its stream link");checks++;
         Object onlyDub=decode("com.ellation.crunchyroll.model.Episode",NativeCatalog.episode(title,new JSONObject(providerEpisode.toString()).put("available",new JSONObject().put("sub",false).put("dub",true))));
         check(call(onlyDub,"getAudioLocale").equals("en-US")&&call(onlyDub,"getId").equals("ANI154587E1D"),"Dub-only episodes must not advertise an unavailable Japanese asset");checks++;
@@ -177,7 +193,18 @@ public final class ModelContractProbe {
             JSONObject one=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=0&n=25")),two=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=25&n=25"));
             java.util.HashSet<String> ids=new java.util.HashSet<>();for(int i=0;i<one.getJSONArray("data").length();i++)ids.add(one.getJSONArray("data").getJSONObject(i).getString("id"));
             for(int i=0;i<two.getJSONArray("data").length();i++)check(ids.add(two.getJSONArray("data").getJSONObject(i).getString("id")),"Catalog pages repeat title IDs");
+            JSONObject three=NativeDiscovery.route(android.net.Uri.parse("https://local/browse?start=50&n=25"));
+            for(int i=0;i<three.getJSONArray("data").length();i++)check(ids.add(three.getJSONArray("data").getJSONObject(i).getString("id")),"Catalog provider page boundary repeats title IDs");
             check(one.getJSONArray("data").length()==25&&two.getJSONArray("data").length()==25,"Catalog page lengths");
+            JSONObject home=NativeHomeFeed.home(0,6);int homeTotal=home.getInt("total");java.util.Set<String> rowIds=new java.util.HashSet<>(),cards=new java.util.HashSet<>();int rows=0;
+            for(int offset=0;offset<homeTotal;offset+=6){JSONObject chunk=NativeHomeFeed.home(offset,6);check(chunk.getInt("total")==homeTotal,"Home snapshot total changed while paging");org.json.JSONArray data=chunk.getJSONArray("data");
+                for(int n=0;n<data.length();n++){JSONObject row=data.getJSONObject(n);check(rowIds.add(row.getString("id")),"Home repeats a row across native pages");
+                    Object original=decode("com.ellation.crunchyroll.api.model.HomeFeedItemRaw",row);check((Boolean)call(original,"isValid"),"Live Home row invalid in original model");
+                    if(row.optString("resource_type").equals("CURATED_COLLECTION")){rows++;org.json.JSONArray members=row.getJSONArray("ids");check(members.length()<=14,"Home rail exceeds image-work budget");for(int n2=0;n2<members.length();n2++)check(cards.add(members.getString(n2)),"Home repeats anime cards across collections");}
+                }
+            }
+            check(rows>=8&&cards.size()>=60&&NativeHomeFeed.home(homeTotal,6).getJSONArray("data").length()==0,"Live Home must contain diverse rows and terminate cleanly");
+            System.out.println("Live Home passed: "+rows+" unique rails, "+cards.size()+" distinct cards, stable paging");
             cached.remove(154587);JSONObject detail=BackendBridge.series(154587);NativePlayback.publicHttps(NativeMetadata.string(detail.getJSONArray("episodeList").getJSONObject(0),"thumbnail"));
             JSONObject ranges=NativePlayback.skipEvents("ANI21E1");check(ranges.has("intro"),"Live intro metadata");
             System.out.println("Live hybrid catalog passed: disjoint pages, episode image, intro metadata");

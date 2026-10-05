@@ -10,7 +10,13 @@ import java.util.concurrent.*;
 /** Provider collections rendered by the retained native Home feed. */
 final class NativeHomeFeed {
     private static JSONArray snapshot;
+    private static JSONArray refreshed;
     private static long expires;
+    private static FutureTask<JSONArray> loading;
+    private static final Object LOCK=new Object();
+    private static final ExecutorService REFRESH=Executors.newSingleThreadExecutor(task->{Thread thread=new Thread(task,"APKForgeHomeRefresh");thread.setDaemon(true);return thread;});
+    private static final int ROW_SIZE=14;
+    private static final long FRESHNESS_MS=120000;
     private static final String[][] COLLECTIONS={
         {"popular","Popular This Week","range=week"},
         {"trending","Trending Today","range=today"},
@@ -53,16 +59,39 @@ final class NativeHomeFeed {
             .put("response_type","SERIES").put("title",title).put("ids",ids)
             .put("link","/content/v2/discover/apkforge-"+id);
     }
-    static synchronized JSONObject home(int start,int limit)throws Exception {
-        // Hold subsequent pages in the same feed even when its freshness window expires.
-        // Refreshing in the middle of a scroll can reorder rows or repeat the hero.
-        if(snapshot==null||(start<=0&&expires<=android.os.SystemClock.elapsedRealtime())){
-            for(String[] c:COLLECTIONS)if(!c[2].isEmpty())BackendBridge.invalidate(query(c[0]).replace("limit=100","limit=32"));
-            NativeMetadata.invalidateDiscovery();
-            try{snapshot=load();expires=android.os.SystemClock.elapsedRealtime()+15000;}
-            catch(Exception unavailable){if(snapshot==null)throw unavailable;expires=android.os.SystemClock.elapsedRealtime()+15000;}
+    static JSONObject home(int start,int limit)throws Exception {
+        FutureTask<JSONArray> task;
+        synchronized(LOCK){
+            // Install a completed refresh only when a new feed starts. Later pages
+            // always belong to the active snapshot, including while refresh is running.
+            if(start<=0&&refreshed!=null){snapshot=refreshed;refreshed=null;}
+            if(snapshot!=null&&(start>0||expires>android.os.SystemClock.elapsedRealtime()))return page(snapshot,start,limit);
+            if(loading==null){
+                loading=new FutureTask<>(()->{
+                    try{
+                        JSONArray result=load();
+                        synchronized(LOCK){refreshed=result;expires=android.os.SystemClock.elapsedRealtime()+FRESHNESS_MS;}
+                        return result;
+                    }catch(Exception unavailable){synchronized(LOCK){expires=android.os.SystemClock.elapsedRealtime()+15000;}throw unavailable;
+                    }finally{synchronized(LOCK){loading=null;}}
+                });
+                REFRESH.execute(loading);
+            }
+            task=loading;
+            // A warm feed is served immediately. Network work never holds its lock.
+            if(snapshot!=null)return page(snapshot,start,limit);
         }
-        return page(snapshot,start,limit);
+        JSONArray initial;
+        try{initial=task.get();}catch(ExecutionException failed){Throwable cause=failed.getCause();if(cause instanceof Exception)throw (Exception)cause;throw failed;}
+        synchronized(LOCK){if(snapshot==null){snapshot=initial;if(refreshed==initial)refreshed=null;}return page(snapshot,start,limit);}
+    }
+    static JSONArray select(JSONArray records,java.util.Set<Integer> used,int limit)throws Exception {
+        JSONArray selected=new JSONArray();
+        for(int i=0;i<records.length()&&selected.length()<limit;i++){
+            JSONObject record=records.getJSONObject(i);int id=record.optInt("anilistId");
+            if(id>0&&!record.optBoolean("adult")&&used.add(id))selected.put(record);
+        }
+        return selected;
     }
     static JSONObject page(JSONArray feed,int start,int limit)throws Exception {
         int offset=Math.max(0,start),count=Math.max(1,Math.min(100,limit));
@@ -77,11 +106,13 @@ final class NativeHomeFeed {
             for(String[] c:COLLECTIONS){final String id=c[0];tasks.add(pool.submit(()->id.equals("airing")||id.equals("season")?NativeDiscovery.feed(id):BackendBridge.api(query(id).replace("limit=100","limit=32")).getJSONArray("data")));}
             JSONArray feed=new JSONArray();
             List<JSONArray> collections=new ArrayList<>();JSONArray artwork=new JSONArray();
+            LinkedHashSet<Integer> used=new LinkedHashSet<>();
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(30);
             for(int i=0;i<COLLECTIONS.length;i++){
                 JSONArray records;
                 try{records=tasks.get(i).get(Math.max(1,deadline-System.nanoTime()),TimeUnit.NANOSECONDS);}catch(ExecutionException|TimeoutException e){records=new JSONArray();}
-                collections.add(records);for(int j=0;j<records.length();j++)artwork.put(records.get(j));
+                JSONArray selected=select(records,used,ROW_SIZE);
+                collections.add(selected);for(int j=0;j<selected.length();j++)artwork.put(selected.get(j));
             }
             try{NativeMetadata.artwork(artwork);}catch(Exception optional){android.util.Log.w("APKForgeMetadata","Home artwork refresh unavailable; keeping catalog artwork");}
             for(int i=0;i<COLLECTIONS.length;i++){
@@ -92,7 +123,7 @@ final class NativeHomeFeed {
                     String heroId=row.getJSONArray("ids").getString(0);int key=Integer.parseInt(heroId.substring(3));
                     for(int n=0;n<records.length();n++)if(records.getJSONObject(n).optInt("anilistId")==key){
                         JSONObject hero=records.getJSONObject(n);
-                        feed.put(new JSONObject().put("id","ani-hero").put("resource_type","PANEL").put("response_type","SERIES")
+                        feed.put(new JSONObject().put("id","ani-hero").put("resource_type","PANEL").put("response_type","UNDEFINED")
                             .put("display_type","HERO").put("panel",BackendBridge.panel(hero)).put("title",hero.optString("title")));break;
                     }
                 }

@@ -256,7 +256,10 @@ public final class BackendBridge {
         // Summary refreshes must not discard the already loaded episode list.
         if(existing==null||!existing.has("episodeList")||t.has("episodeList"))titles.put(id,t);
         else{
-            JSONObject merged=new JSONObject(existing.toString());
+            // Keep immutable episode arrays by reference instead of serializing
+            // hundreds of episodes while holding the artwork/title-cache lock.
+            JSONObject merged=new JSONObject();java.util.Iterator<String> keys=existing.keys();
+            while(keys.hasNext()){String key=keys.next();merged.put(key,existing.get(key));}
             for(String key:new String[]{"poster","banner","title","nativeTitle","synopsis","genres","status"})if(!t.isNull(key))merged.put(key,t.get(key));
             titles.put(id,merged);
         }
