@@ -3,6 +3,15 @@ on: [push, pull_request]
 permissions:
   contents: read
 jobs:
+  auth-return:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node test_auth_return.cjs
+      - run: node --check docs/landing.js
   test:
     runs-on: ${{ matrix.os }}
     strategy:

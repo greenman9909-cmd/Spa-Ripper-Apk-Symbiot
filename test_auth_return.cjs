@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync('docs/return.js', 'utf8');
 function fixture(hash, search = '', readyState = 'complete') {
-  const nodes = {heading: {}, message: {}};
+  const nodes = {heading: {}, message: {}, 'auth-return': {}, site: {}};
   const events = {};
   const location = {hash, search, pathname: '/Spa-Ripper-Apk-Symbiot/'};
   const window = {
@@ -18,8 +18,8 @@ function fixture(hash, search = '', readyState = 'complete') {
   const document = {readyState, getElementById(id) {return nodes[id];},
     addEventListener(name, handler) {events[name] = handler;}};
   vm.runInNewContext(source, {window, document, URLSearchParams});
-  assert.equal(location.hash, ''); assert.equal(location.search, '');
-  return {nodes, events, location};
+  if (window.authReturnActive || !hash) { assert.equal(location.hash, ''); assert.equal(location.search, ''); }
+  return {nodes, events, location, window};
 }
 let state = fixture('#access_token=synthetic&refresh_token=synthetic&type=signup');
 assert.equal(state.nodes.heading.textContent, 'Return to the app');
@@ -42,4 +42,18 @@ state = fixture('#error=synthetic', '', 'loading');
 assert.equal(state.nodes.heading.textContent, undefined);
 state.events.DOMContentLoaded();
 assert.equal(state.nodes.heading.textContent, 'This link is no longer valid');
-console.log('Confirmation return: six privacy/state cases passed');
+assert.equal(state.nodes['auth-return'].hidden, false);
+assert.equal(state.nodes.site.hidden, true);
+state = fixture('#catalogo');
+assert.equal(state.location.hash, '#catalogo');
+assert.equal(state.window.authReturnActive, false);
+assert.equal(state.nodes['auth-return'].hidden, true);
+assert.equal(state.nodes.site.hidden, false);
+state = fixture('#access_token=synthetic&refresh_token=synthetic&type=signup');
+vm.runInNewContext(fs.readFileSync('docs/landing.js', 'utf8'), {
+  window: state.window,
+  document: {getElementById(){throw Error('Landing touched the callback DOM');}},
+  fetch(){throw Error('Catalog requested during authentication callback');},
+  localStorage: {getItem(){throw Error('Storage read during authentication callback');}}
+});
+console.log('Confirmation return: six original cases plus landing/anchor/network isolation passed');

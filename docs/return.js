@@ -4,10 +4,17 @@
   function processReturn() {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const query = new URLSearchParams(window.location.search);
+    const keys = ['access_token', 'refresh_token', 'error', 'error_code', 'type', 'code', 'token_hash'];
+    const active = keys.some(key => fragment.has(key) || query.has(key));
+    window.authReturnActive = active;
     const failed = fragment.has('error') || fragment.has('error_code') || query.has('error') || query.has('error_code');
     const recovery = fragment.get('type') === 'recovery' || query.get('type') === 'recovery';
-    window.history.replaceState(null, '', window.location.pathname);
+    if (active || !window.location.hash) window.history.replaceState(null, '', window.location.pathname);
     function render() {
+    const panel = document.getElementById('auth-return');
+    const site = document.getElementById('site');
+    if (panel) panel.hidden = !active;
+    if (site) site.hidden = active;
     if (failed) {
       document.getElementById('heading').textContent = 'This link is no longer valid';
       document.getElementById('message').textContent = 'The link may have expired or already been used to confirm your account. First return to the Android app and try signing in. If the app still says your email is unconfirmed, request a new confirmation email. This page cannot check your account status.';

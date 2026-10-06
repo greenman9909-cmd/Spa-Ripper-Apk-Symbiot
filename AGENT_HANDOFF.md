@@ -4,6 +4,8 @@ Updated 2026-10-06 for **0.4.10 / 1000050**. The user wants production readiness
 
 ## Latest requirements
 
+The owner also requested an app-style public landing. `docs/` now contains the Spanish Yoru site, fresh AniList catalog/search, local web favorites and APK download. The existing Supabase callback remains at the same URL and is isolated before metadata/images/storage load. See [LANDING_GUIDE.md](LANDING_GUIDE.md). This website change does not establish new APK playback acceptance or alter Supabase settings.
+
 Preserve the supplied APK's original screens, resources, profile picker/creator, navigation and native player. The reconstructed HTML interface was rejected. Use AniList metadata, ani.pm availability and the existing native resolver without executing remote embed/ad pages or launching browsers.
 
 **Require an account; remove guest access.** This supersedes earlier optional-login requests. Prefer hard subtitles when explicitly available in the selected language, allowing separate tracks otherwise. Spanish and other real provider languages are wanted. Never invent availability or claim unaudited translation accuracy.
