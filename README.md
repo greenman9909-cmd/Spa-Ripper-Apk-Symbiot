@@ -6,6 +6,8 @@ Public app landing: [Yoru — Más anime. Más tú.](https://greenman9909-cmd.gi
 
 Web playback implementation handoff (Spanish, plain text): [WEB_PLAYER_HANDOFF_ES.txt](docs/WEB_PLAYER_HANDOFF_ES.txt). Covers the actual hybrid provider contracts, direct HLS versus browser CORS/header limits, hard-sub preference and separate subtitle styling, catalog/season identity, compatible Supabase state, and acceptance tests. This is a guide; web video playback is not implemented. Android work is paused at the owner's request.
 
+For an existing website that only needs the player: [PLAYER_INTEGRATION_ES.txt](docs/PLAYER_INTEGRATION_ES.txt). Includes current sanitized Frieren/Naruto watch-response observations, exact requests, source resolution, a proposed backend contract, HLS.js connection example, subtitle style and player-specific acceptance checks. The observed sources were embeds and did not declare a hard-sub locale; direct browser playback is still unverified.
+
 ## Experimental original-screen Android APK
 
 The native migration retains the supplied APK's original screens/resources and player. It combines AniList discovery, ani.pm availability, mapped episode images, native HLS and Supabase profiles/comments. Spanish dialogue has been verified in the original player. See [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for current evidence and limits; full production migration remains unfinished.
