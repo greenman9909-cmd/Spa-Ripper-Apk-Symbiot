@@ -1,0 +1,418 @@
+GUÍA PARA ADAPTAR EL REPRODUCTOR DE LA APK A LA WEB
+Fecha: 2026-10-06. Documento de implementación; NO es un reproductor ya instalado.
+
+1. OBJETIVO Y ALCANCE
+
+Crear una web de anime con catálogo actualizado, búsqueda, fichas agrupadas por
+temporadas, episodios reales y reproductor propio HLS. Usar hard subs cuando exista
+una fuente explícitamente etiquetada para el idioma solicitado; si no existe,
+permitir pistas separadas con letras blancas, negrita y contorno negro.
+
+La web no debe cargar la página remota del reproductor, ejecutar sus scripts ni
+abrir pestañas publicitarias. Esto evita los popups de esas páginas; no demuestra
+que todos los vídeos del proveedor carezcan de anuncios insertados en el contenido.
+La ausencia total de anuncios debe comprobarse por fuente, no anunciarse sin prueba.
+
+El usuario ha pausado el trabajo de la APK y ahora solicita esta guía publicada.
+No modificar Android, borrar cachés, reinstalar apps, cambiar Supabase, contratar
+alojamiento o desplegar un proxy como parte de escribir este documento.
+
+2. PROYECTO ACTUAL Y PUNTO DE PARTIDA
+
+Repositorio: https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot
+Rama: codex/evidence-driven-apk-analysis
+Base Android revisada: b14f27bb2cc5e7f0c9b35623e8cf8b429f2d928b (0.4.11).
+Web actual: https://greenman9909-cmd.github.io/Spa-Ripper-Apk-Symbiot/
+Carpeta publicada: docs/. El index.html de la raíz es otra herramienta local.
+
+docs/index.html, landing.css y landing.js proporcionan la landing Yoru, catálogo
+AniList, búsqueda, fichas y favoritos locales. NO incluyen reproducción web ni
+login web de Supabase. El límite actual es 240 tarjetas y 100 favoritos locales.
+No presentar esos favoritos como sincronizados con la cuenta de la APK.
+
+docs/return.js conserva el retorno de confirmación de email de la APK. Se ejecuta
+antes de landing.js y elimina credenciales del enlace antes de cargar catálogo,
+imágenes o almacenamiento. No convertir ese retorno en un login web implícito:
+actualmente solo da instrucciones para volver a la app. Conservar sus pruebas.
+
+Leer también AGENT_HANDOFF.md, VALIDATION_0.4.11.md y LANDING_GUIDE.md.
+La APK sigue siendo una preview. Sus pruebas no establecen aceptación web.
+
+3. QUÉ API HACE QUÉ
+
+A) METADATOS Y DESCUBRIMIENTO
+POST https://graphql.anilist.co
+Body JSON: {"query":"...","variables":{...}}
+Content-Type: application/json. Comprobar HTTP y también errors en el JSON.
+AniList aporta nombres, relaciones, portadas, estado, géneros y cifras de catálogo;
+NO es un proveedor de vídeos ni una prueba de que un episodio se pueda reproducir.
+
+Consulta inicial propuesta (adaptar perPage a la carga de la web):
+
+query($page:Int!,$search:String,$genre:String,$season:MediaSeason,$year:Int) {
+  Page(page:$page,perPage:24) {
+    pageInfo { hasNextPage }
+    media(type:ANIME,isAdult:false,search:$search,genre:$genre,
+          season:$season,seasonYear:$year,sort:[TRENDING_DESC,ID]) {
+      id idMal format status episodes startDate { year month day }
+      title { english romaji native }
+      coverImage { extraLarge large color } bannerImage
+      description(asHtml:false) genres averageScore
+      relations { edges { relationType node { id format status isAdult } } }
+    }
+  }
+}
+
+Usar variables, no concatenar texto de búsqueda dentro de GraphQL.
+Usar hasNextPage; no depender de total/lastPage como cifras exactas.
+Para una ficha, consultar Media(id:$id,type:ANIME,isAdult:false) con esos campos.
+
+B) DISPONIBILIDAD PRIMARIA: ANI.PM
+Base usada en BackendBridge.java: https://ani.pm/api/partner/v1
+Rutas usadas: /top?... y /series/{anilistId}?adult=0; revisar BackendBridge.java para el
+contrato completo antes de portar. /top acepta las colecciones range/genre/adult/
+limit utilizadas en NativeHomeFeed.java. La ficha exige data.anilistId coincidente
+y data.episodeList como array. No confundir catálogo con reproducción.
+Documentación: https://ani.pm/developers
+La documentación pública de iframe NO garantiza un endpoint HLS nativo directo.
+En este entorno ani.pm falló con TLS interceptado por Fortinet. No desactivar
+TLS, instalar certificados de intercepción ni llamar a ese fallo datos frescos.
+La documentación no fue accesible al navegador de investigación al redactar
+esta guía: los detalles anteriores proceden del código local, no de una nueva
+verificación de disponibilidad de ani.pm.
+
+C) DISPONIBILIDAD SECUNDARIA Y BUNDLES DE REPRODUCCIÓN
+Base: https://anivexaapi-aniko2.hf.space/api
+GET /episodes/{anilistId}
+GET /watch/{anilistId}/{audio}/{episode}
+audio es sub o dub. Son categorías del proveedor, NO un selector universal de
+doblajes en español/francés/etc. No inventar idiomas de audio que no declara.
+
+Contrato observado de /episodes:
+meta.malId; episodes.sub[]; episodes.dub[]. Cada registro tiene id, number, audio,
+hasSub/hasDub y puede incluir title, description, image, duration y airDate.
+ID observado: watch/anikoto/{anilistId}/{audio}/anikoto-{number}.
+
+Validación existente que debe portarse desde NativeEpisodes.java:
+- AniList ID positivo y exactamente el solicitado.
+- Obtener idMal real de AniList; exigir MAL positivo y meta.malId coincidente.
+- Exigir ambos grupos como arrays; límite 6000 registros por grupo.
+- Número entero positivo, máximo 100000; ID y audio exactamente coincidentes.
+- Solo habilitar un audio cuando existe registro en su grupo y su booleano es
+  literalmente true. hasDub en una fila del grupo sub NO crea una fila dub.
+- Unificar por número conservando números absolutos/huecos, no renumerar.
+- Mantener títulos, imágenes y duración reales; duración válida hasta 86400 s.
+- Rechazar datos incompatibles y mostrar indisponibilidad en la ficha actual.
+
+El código público del proveedor tiene una rama sin MAL que puede estimar la
+disponibilidad de audio. Nuestra APK la rechaza: conservar esa protección.
+Fuente primaria del proveedor:
+https://huggingface.co/spaces/anivexaapi/aniko2/blob/main/server.js
+https://huggingface.co/spaces/anivexaapi/aniko2/blob/main/scraper.js
+Los contratos cambian: guardar fixtures sanitizados y verificar, no asumir.
+
+Contrato observado de /watch: seleccionar ssub para sub o sdub para dub.
+El bundle elegido debe contener streams[]. Puede contener subtitles[] y rangos
+intro/outro. No asumir que todos los streams[].url son archivos de vídeo.
+
+D) METADATOS POR EPISODIO
+GET https://api.ani.zip/mappings?anilist_id={anilistId}
+Exigir mappings.anilist_id igual al solicitado antes de unir fotos/títulos/fechas.
+Esto enriquece registros disponibles; NO crea disponibilidad de vídeo/audio.
+NativeMetadata.java contiene la combinación actual. Respetar numeración absoluta
+y especiales: no enlazar un episodio por simple coincidencia del texto del título.
+
+E) SUPABASE EXISTENTE
+Proyecto Spa-Ripper-AniPM: yhccrdatocqqniblpshm.
+URL: https://yhccrdatocqqniblpshm.supabase.co
+Usar una clave publishable obtenida del dashboard. No incluir service-role,
+contraseñas, refresh tokens, sesiones o URLs firmadas en esta guía/repo/logs.
+No utilizar el proyecto yoru-cinema.supabase.co extraído de otra app.
+
+4. REPRODUCCIÓN: LO QUE SE PUEDE REUTILIZAR
+
+La lógica Android está en NativePlayback.java y NativeWatchCache.java.
+Flujo: identidad exacta -> disponibilidad -> bundle del audio solicitado ->
+selección de fuente -> resolución -> verificación de manifiesto -> reproducción.
+
+La APK admite HLS directo cuando type == hls, URL HTTPS pública y el contrato de
+referer coincide con https://megaplay.buzz/. No confundir una URL de embed con HLS.
+Su alternativa existente resuelve fuentes MegaPlay en el servidor del proveedor:
+lee data-id de una respuesta restringida /stream/, solicita /stream/getSources?id=
+y usa decodeSources() para el payload. No ejecuta la página ni sus scripts.
+Consultar el código existente para este contrato; no copiar todo como JavaScript
+de navegador ni publicar valores nuevos como si fueran una API oficial estable.
+Usar solo fuentes cuyo acceso y uso permitan los proveedores; no ampliar esto a
+bypass de DRM, autenticación, pagos o controles de acceso.
+
+Verificar HTTP exitoso y que el manifiesto empieza por #EXTM3U. Una página HTML
+con HTTP 200 no es un stream válido. Después probar al menos una variante, sus
+segmentos y cualquier recurso de cifrado legítimamente necesario; verificar solo
+el master no demuestra reproducción completa.
+
+Modelo web PROPUESTO, todavía no implementado (no es JSON literal del proveedor):
+{
+  "anilistId": 154587,
+  "episode": 1,
+  "audio": "sub",
+  "source": {"type":"hls","url":"<URL verificada temporal>",
+             "hardsubLocale":"<locale real o null>"},
+  "subtitles": [{"language":"<locale real>","format":"vtt",
+                 "url":"<pista verificada temporal>"}],
+  "intro": null,
+  "outro": null
+}
+Rangos opcionales: {"start":<segundos>,"end":<segundos>}. No inventarlos.
+
+5. ARQUITECTURA WEB Y CORS
+
+Frontend: catálogo actual + ficha/temporadas/episodios + <video> + HLS.js.
+Backend: adaptadores de disponibilidad/resolución y, si el contrato lo permite y
+lo requiere, entrega controlada de medios. GitHub Pages aloja archivos estáticos;
+no ejecuta este backend. Elegir alojamiento por duración de peticiones, streaming,
+coste/egress y límites; no desplegar ni contratar hasta resolver esas condiciones.
+
+Dos caminos deben probarse desde el dominio REAL de la web:
+A. URL directa: sirve solo si master, variantes, segmentos y pistas permiten el
+   origen, funcionan en navegador y no exigen cabeceras imposibles desde la web.
+B. Backend controlado: si la fuente permite entrega mediante backend, configurar
+   allí sus cabeceras y entregar recursos al reproductor. No proponer un proxy
+   abierto ni usarlo para saltar una prohibición del proveedor.
+
+Resolver una URL en servidor y devolverla al navegador NO arregla el CORS de los
+segmentos ni el Referer requerido por la CDN. El navegador controla Referer y
+Origin; no prometer reproducir las cabeceras de Android con fetch/XHR. Revisar:
+https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header
+https://github.com/video-dev/hls.js#cors
+
+Backend propuesto (rutas nuevas, ninguna existe todavía en esta web):
+GET /api/web/catalog?page=...&search=...&genre=...&season=...&year=...
+GET /api/web/title/{anilistId}
+GET /api/web/title/{anilistId}/episodes?audio=sub
+POST /api/web/playback {anilistId, episode, audio, subtitleLanguage}
+GET /api/web/media/{opaqueId}      (solo si es necesario y permitido)
+GET /api/web/subtitles/{opaqueId}  (pista validada/convertida)
+
+No aceptar ?url=<cualquier URL> como un proxy público. Si se usa entrega backend:
+- IDs opacos vinculados a recursos validados y expiración; autenticar cuando toca.
+- Allowlist exacta de hosts aprobados, HTTPS, puertos permitidos y DNS verificado;
+  bloquear loopback/redes privadas/reservadas y volver a comprobar redirecciones.
+  La validación Android publicHttps() NO basta como protección SSRF en servidor.
+- Reescribir todos los recursos URI del HLS con un parser, incluidos variantes,
+  EXT-X-MEDIA, mapas/init, segmentos, claves y referencias relativas. No usar solo
+  una expresión regular sobre líneas que terminan en .ts.
+- Conservar Range, respuestas 206/Content-Range y límites de transferencia cuando
+  proceda; streaming con backpressure/cancelación, no cargar vídeos completos RAM.
+- No reenviar cookies ni Authorization del usuario al proveedor/CDN.
+- No propagar scripts/HTML/Set-Cookie de la fuente ni insertar anuncios.
+- No registrar URLs firmadas completas. Errores sanitizados y correlationId.
+- Respetar caducidad de URLs: un catálogo persistente no es caché de autorización.
+
+6. REPRODUCTOR PROPIO Y NAVEGACIÓN
+
+Usar HLS.js con versión fijada y lockfile; soporte nativo donde corresponda.
+Referencia: https://github.com/video-dev/hls.js
+Crear un único reproductor por vídeo. Destruir la instancia, listeners, requests
+y overlays al cambiar episodio/fuente o cerrar la ficha. Cancelar resoluciones
+anteriores; usar un generationId para ignorar respuestas tardías.
+Estados: loading, ready, playing, unavailable, error, ended. Un fallo debe dejar
+la ficha actual y ofrecer reintentar/cambiar fuente; nunca redirigir a Home.
+Fullscreen debe incluir controles y subtítulos propios. Ajustar vídeo con contain
+y conservar aspecto real (incluido Naruto 4:3); no estirar a 16:9.
+Botones episodio anterior/siguiente usan el ID fuente y número absoluto reales.
+Guardar progreso por cuenta + perfil + AniList ID + episodio + audio; limitar
+escrituras y no marcar visto por abrir una ficha. Mantener URL navegable y Back.
+Skip intro/outro solo si start>=0, end>start y dentro de duración real; mostrar el
+botón dentro del intervalo. No usar una duración genérica de 90 segundos.
+
+7. HARD SUBS, ESTILO Y LENGUAJES
+
+Hard sub = texto ya grabado en los píxeles del vídeo. No se puede traducir,
+desactivar ni cambiar tipografía sin producir otra copia de vídeo/transcodificar.
+Nuestra implementación NO quema nuevas traducciones en el vídeo.
+
+Preferencia acordada: preferir hard subs del idioma solicitado, permitir pistas
+separadas. Solo identificar hard subs mediante hardsub_locale/hardsubLocale
+declarado; nunca inferir su idioma a partir de audio=sub, título o nombre de host.
+Orden: hard sub coincidente -> fuente sin hard sub con pista coincidente -> mostrar
+opciones reales/indisponibilidad. No elegir automáticamente hard sub de otro idioma.
+No superponer pistas separadas a hard subs coincidentes (evitar texto duplicado).
+
+NativeSubtitles.java reconoce VTT, SRT, ASS/SSA y normaliza label/language/srclang/
+locale. Reutilizar la política, NO sus URLs appassets.androidplatform.net: son
+internas de Android y no existen en la web. Convertir SRT/ASS a WebVTT validado
+para pistas HTML o a cues estructurados para un overlay controlado.
+
+Estilo Android actual: Arial, 40 sobre lienzo 1280x720, negrita, blanco, borde negro
+2.5, sombra 1, centrado inferior, márgenes 36. Traducir proporcionalmente al área
+del vídeo, no a toda la página. Un overlay puede reproducirlo de forma consistente
+incluido fullscreen; ::cue y pistas nativas varían según navegador. No afirmar
+que la API devuelve hard subs con ese estilo: el estilo se aplica a pistas separadas.
+
+Conservar Unicode, saltos, milisegundos y orden. Exigir end>start, tiempos finitos,
+límites de tamaño/cues y texto seguro. Renderizar texto, nunca innerHTML del proveedor.
+La conversión actual simplifica ASS complejo/karaoke/posicionamiento; decidir entre
+ese modo uniforme y un renderer ASS mantenido, documentando la diferencia.
+La exactitud lingüística NO fue auditada. No generar traducciones y llamarlas
+oficiales. Comparar sincronización con voces durante seek/cambio de calidad.
+
+Locales relevantes: en-US, es-ES, es-419, pt-BR, pt-PT, fr-FR, de-DE, it-IT,
+ar-SA, ja-JP, etc. Que el normalizador soporte 35 idiomas NO significa que cada
+episodio los ofrezca. Mostrar únicamente pistas/fuentes obtenidas para ese episodio.
+No confundir audio doblado y subtítulos; guardarlos como preferencias independientes.
+
+Evidencia real Android: Naruto E1 mostró English y None; no anunciar español allí.
+Frieren E1: English, español España y español Latinoamérica se descargaron y
+convirtieron correctamente. Esa prueba no establece hard sub español, precisión
+lingüística ni reproducción web aceptada. Ver VALIDATION_0.4.11.md.
+
+8. CATÁLOGO, TEMPORADAS, IMÁGENES Y SCROLL
+
+Portar NativeHomeFeed, NativeDiscovery, NativeFranchises y NativeMetadata como
+reglas, no como clases Android que se pueden importar directamente al navegador.
+- Home usa snapshot estable; actualizar al entrar/recargar sin reinstalar toda la
+  lista mientras se desplaza. Frescura propuesta inicial: 120 segundos.
+- Deduplicar tarjetas por identidad entre filas. No llenar filas repitiendo títulos
+  cuando falta contenido. Distinguir stale de actualizado en la UI.
+- Paginación por hasNextPage y un solo request activo por consulta. Abort y generation
+  al cambiar búsqueda/filtros. Añadir nodos/tarjetas nuevas, mantener scroll y keys.
+- IntersectionObserver con sentinel y botón cargar más accesible; no fetch por cada
+  evento scroll. Bounded DOM/virtualización si el catálogo crece mucho.
+- Respetar Retry-After en 429/503, backoff y último resultado bueno. No bucles infinitos
+  de reintentos ni afirmar frescura cuando el request falló.
+- Agrupar por PREQUEL/SEQUEL TV del mismo formato; no adivinar franquicias por título.
+  Evitar ramas ambiguas/ciclos. Ficha con selector de fuentes/temporadas exactas;
+  portada más reciente de una temporada publicada y validada, sin perder sus IDs.
+- No inventar S1/S2 para un único registro largo (Black Clover puede no corresponder
+  a la segmentación esperada del usuario). Si se segmenta, requerir un mapeo fiable.
+- Relacionadas: máximo 3 requests concurrentes y presupuesto global; mostrar la ficha
+  pedida aunque falle una temporada. No reemplazarla por una disponible distinta.
+- Preferir coverImage.extraLarge y bannerImage reales. srcset/sizes solo con URLs
+  reales; object-fit adecuado, lazy/async, espacio reservado para evitar saltos,
+  fallback cuando falta foto. No inventar resolución HD ni ampliar miniaturas.
+- Fotos por episodio desde disponibilidad/AniZip con identidad coincidente. Una
+  portada de serie como fallback no debe etiquetarse como fotograma del episodio.
+
+9. CUENTAS, LISTAS Y PERFILES WEB
+
+Auth recomendada con @supabase/supabase-js; si se elige SSR, usar @supabase/ssr y
+validar identidad en servidor según documentación. No confiar en user_id recibido
+del frontend ni en una sesión simplemente decodificada para autorizar recursos.
+https://supabase.com/docs/guides/auth/server-side/creating-a-client
+
+Endpoints REST ya usados en Android (preferir SDK para la web):
+POST /auth/v1/signup
+POST /auth/v1/token?grant_type=password
+POST /auth/v1/token?grant_type=refresh_token
+POST /auth/v1/recover
+POST /auth/v1/logout
+GET /rest/v1/account_state?user_id=eq.{id}&select=snapshot
+POST /rest/v1/account_state?on_conflict=user_id
+Headers Data API: apikey publishable, Authorization Bearer sesión del usuario.
+
+Tabla account_state existente: user_id UUID PK, snapshot JSONB objeto máximo 1 MiB,
+updated_at timestamptz. RLS limita select/insert/update/delete a auth.uid()==user_id.
+Migraciones reales en supabase/migrations/ (seis archivos; no reaplicarlas a ciegas).
+Otros datos: app_comments y app_comment_votes; revisar NativeCommunity y SQL real.
+NO existe aquí un contrato comprobado de la tabla user_history de la otra APK.
+
+IMPORTANTE: snapshot actual usa valores STRING de preferencias Android (JSON
+serializado dentro de strings), no un nuevo objeto libre de profiles/history.
+Leer LocalProfiles.allowed(), constructor/restauración, route() y sync; claves:
+profiles, selected, watchlist:{profileId}, playheads:{profileId}, ratings:{profileId}
+y custom-lists:{profileId}. Añadir schemaVersion y una
+migración compatible antes de escribir desde web. No sobreescribir listas/progreso
+de Android con un snapshot incompleto. Conflictos simultáneos requieren estrategia
+probada; cloud restore/conflictos todavía no están aceptados en producción.
+
+Login web debe incluir confirmación email, reenvío explícito con cooldown, recovery,
+errores visibles y signout. No auto-confirmar usuarios ni desactivar confirmación.
+SMTP/redirects deben configurarse y probarse con el dueño, no asumirlos resueltos.
+Para PKCE web, callback dedicado que intercambie code; el retorno actual que limpia
+el enlace NO hace ese intercambio. Registrar URL exacta y no romper retorno APK.
+No compartir respuestas privadas de auth/perfiles mediante CDN/cache público.
+No afirmar que una insignia local equivale a una suscripción oficial Mega Fan.
+Descargas web/offline son otra fase: compatibilidad, cuotas, permisos y aislamiento
+necesitan diseño/pruebas propios; NativeDownloads no es una implementación web.
+
+10. CONFIGURACIÓN PROPUESTA (PLACEHOLDERS, SIN SECRETOS)
+
+PUBLIC_SUPABASE_URL=https://yhccrdatocqqniblpshm.supabase.co
+PUBLIC_SUPABASE_PUBLISHABLE_KEY=<obtener del dashboard>
+WEB_API_ORIGIN=<backend HTTPS que se decida alojar>
+WEB_ALLOWED_ORIGIN=https://greenman9909-cmd.github.io
+EPISODE_PROVIDER_BASE=https://anivexaapi-aniko2.hf.space/api
+ANIPM_BASE=https://ani.pm/api/partner/v1
+
+El prefijo PUBLIC depende del framework; no usarlo para claves privadas. Config
+del servidor/media y tokens deben permanecer fuera de docs/ y archivos versionados.
+CSP actual necesita revisión para media-src, connect-src, worker-src y estilos
+del player; preferir assets propios/versionados. No resolverlo con permisos wildcard.
+Las rutas relativas deben funcionar bajo /Spa-Ripper-Apk-Symbiot/, no solo en /.
+
+11. PLAN DE IMPLEMENTACIÓN Y CRITERIO DE ACEPTACIÓN
+
+Fase 1: prueba aislada en dominio real de One Piece E1 (21), Naruto E1 (20),
+Frieren E1 (154587). Resolver bundle correcto, verificar master/segmentos y decidir
+directo vs backend permitido. Registrar solo códigos, tiempos e identidad, sin tokens.
+Si no se puede entregar vídeo con el contrato del proveedor, declarar ese bloqueo
+antes de construir una falsa UI que vuelve a Home.
+
+Fase 2: adaptadores con esquema normalizado, fixtures sanitizados, identidad fuerte,
+timeouts y límites. No ejecutar scripts de embeds. Cache bundle 45 s, error 5 s,
+coalescing por episodio/audio; resolved source por idioma <=60 s y nunca más que su
+caducidad real. La APK usa cache RAM de 16 bundles / 2 Mi caracteres: política inicial,
+no cifra universal válida para cualquier servidor. Nunca cache público de sesiones.
+
+Fase 3: reproductor/ficha/temporadas, pistas y estilo, skip válido y recuperación de
+errores. Ver vídeo avanzado al menos dos minutos, seek, fullscreen y cambio episodio;
+probar navegadores móviles/desktop, no solo HTTP 200 del resolver.
+
+Fase 4: Home/paging sin saltos ni duplicados, búsqueda/cancelación, imágenes, Browse
+y Simulcasts con trimestre/año reales. Verificar todas las rutas de tarjetas/filas.
+
+Fase 5: auth/perfiles/listas/progreso web compatibles con Android, restauración en
+otro navegador y prueba de dos cuentas; mantener aislado callback existente.
+
+Casos mínimos de aceptación:
+- Idioma solicitado existente, ausente y hard sub de otro idioma; None y no duplicados.
+- Español España vs Latinoamérica etiquetados correctamente, RTL/Unicode multilínea,
+  fullscreen y seek sin desincronización. Evaluar traducción aparte de sincronización.
+- Naruto English-only no muestra idiomas inventados; AniList metadata sin vídeo no
+  ofrece botones reproducibles ficticios. MAL/episodio/audio incompatibles rechazados.
+- Master funciona pero segmento falla; URL caduca; 429/503; HTML en vez de manifiesto;
+  DNS/redirección bloqueada. Reintento finito y ficha preservada, sin popups externos.
+- Cambio rápido título/episodio/filtros ignora requests viejos y no reproduce lo previo.
+- Tres páginas con IDs únicos, reload/Back preservan navegación y scroll estable.
+- Imágenes ausentes/lentas/verticales/panorámicas no deforman layout.
+- Cuenta A nunca ve datos/descargas de B; cambios no borran snapshot Android.
+- Callback antiguo/caducado/nuevo sigue sin filtrar tokens a requests/analytics.
+- Consola, red y sesión real inspeccionadas; un test unitario no demuestra cero bugs.
+
+Pruebas existentes para conservar al editar la landing:
+node --test test_auth_return.cjs
+node --check docs/landing.js
+Preview local: python -m http.server 8137 --bind 127.0.0.1 --directory docs
+Añadir pruebas del player/adapter y aceptación de navegador reales cuando existan.
+No hace falta reconstruir/reinstalar APK para editar la web.
+
+12. EVIDENCIA Y ENTREGA
+
+Android 0.4.11: 44 tests Python, 141 contratos de modelos originales, disponibilidad
+real Naruto 220 / Frieren 28 / Bleach 366, manifiesto One Piece E1 y conversión de
+pistas Frieren. Un candidato reprodujo Naruto E1 visiblemente y navegó a E2.
+Es evidencia Android histórica, NO aceptación de reproducción web ni de todos los
+idiomas/títulos/descargas. La versión final quedó en login pendiente de prueba.
+
+Esta entrega publica instrucciones y referencias; NO cambia el reproductor web,
+Supabase ni proveedores. El siguiente agente debe empezar por la fase 1 y mantener
+una matriz de resultados actuales. No anunciar production ready hasta aceptar los
+flujos de cuenta, reproducción, catálogo, compatibilidad y operación reales.
+
+Archivos que deberá crear/editar el implementador (propuesta, no existentes):
+docs/player.js, docs/player.css, componente/vista de episodios y backend/web/* o
+estructura equivalente del framework elegido. Integrar con la landing sin romper
+return.js; documentar configuración, despliegue, coste, errores y rollback.
+Publicar un PR revisable con fixtures sin credenciales y guía de pruebas; no mezclar
+esta fase web con cambios al APK pausado ni hacer merge/despliegue con coste sin
+autorización aplicable. Usar versiones fijas y fuentes primarias de documentación.

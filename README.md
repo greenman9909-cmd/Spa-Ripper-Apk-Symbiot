@@ -4,6 +4,8 @@ A local, dependency-free tool for inspecting Android APKs and recovering package
 
 Public app landing: [Yoru — Más anime. Más tú.](https://greenman9909-cmd.github.io/Spa-Ripper-Apk-Symbiot/). Responsive catalog, search, local web favorites and the versioned APK download live in `docs/`; the confirmation return stays isolated. See [LANDING_GUIDE.md](LANDING_GUIDE.md). The root studio remains available locally.
 
+Web playback implementation handoff (Spanish, plain text): [WEB_PLAYER_HANDOFF_ES.txt](docs/WEB_PLAYER_HANDOFF_ES.txt). Covers the actual hybrid provider contracts, direct HLS versus browser CORS/header limits, hard-sub preference and separate subtitle styling, catalog/season identity, compatible Supabase state, and acceptance tests. This is a guide; web video playback is not implemented. Android work is paused at the owner's request.
+
 ## Experimental original-screen Android APK
 
 The native migration retains the supplied APK's original screens/resources and player. It combines AniList discovery, ani.pm availability, mapped episode images, native HLS and Supabase profiles/comments. Spanish dialogue has been verified in the original player. See [AGENT_HANDOFF.md](AGENT_HANDOFF.md) for current evidence and limits; full production migration remains unfinished.
