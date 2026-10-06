@@ -296,10 +296,12 @@ public final class BackendBridge {
     static JSONObject series(int id)throws Exception {
         JSONObject title;synchronized(titles){title=titles.get(id);}
         if(title!=null&&title.has("episodeList")&&(!title.has("_detailsLoadedAt")||android.os.SystemClock.elapsedRealtime()-title.optLong("_detailsLoadedAt")<120000))return title;
-        try{JSONObject fresh=api("/series/"+id+"?adult=0").getJSONObject("data");NativeSeasons.apply(fresh,null);NativeMetadata.enrich(fresh);fresh.put("_detailsLoadedAt",android.os.SystemClock.elapsedRealtime());synchronized(titles){titles.put(id,fresh);trimDetails();}return fresh;}
-        catch(java.io.IOException unavailable){
+        try{JSONObject fresh=api("/series/"+id+"?adult=0").getJSONObject("data");if(fresh.optInt("anilistId")!=id||fresh.optJSONArray("episodeList")==null)throw new java.io.IOException("Invalid series response");NativeSeasons.apply(fresh,null);NativeMetadata.enrich(fresh);fresh.put("_detailsLoadedAt",android.os.SystemClock.elapsedRealtime());synchronized(titles){titles.put(id,fresh);trimDetails();}return fresh;}
+        catch(java.io.IOException|org.json.JSONException unavailable){
             if(title!=null&&title.has("episodeList")&&!title.optBoolean("_availabilityUnknown"))return title;
             JSONObject summary=title!=null?title:NativeDiscovery.detail(id);
+            try{JSONObject secondary=NativeEpisodes.load(id,summary);NativeSeasons.apply(secondary,null);NativeMetadata.enrich(secondary);secondary.put("_detailsLoadedAt",android.os.SystemClock.elapsedRealtime());synchronized(titles){titles.put(id,secondary);trimDetails();}return secondary;}
+            catch(java.io.IOException|org.json.JSONException secondaryUnavailable){Log.w(TAG,"Episode providers unavailable; retaining native metadata details");}
             JSONObject fallback=unavailableDetail(summary);NativeMetadata.enrich(fallback);
             synchronized(titles){titles.put(id,fallback);trimDetails();}return fallback;
         }

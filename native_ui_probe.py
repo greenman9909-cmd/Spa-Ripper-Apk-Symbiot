@@ -17,6 +17,7 @@ def main():
     p.add_argument('--text')
     p.add_argument('--description')
     p.add_argument('--resource', help='One visible native resource-id')
+    p.add_argument('--class-name', help='Disambiguate a visible target by its observed native class')
     p.add_argument('--type-text', help='ASCII fixture text for one visible non-password input')
     p.add_argument('--output', type=Path)
     args = p.parse_args()
@@ -55,6 +56,8 @@ def main():
         targets = {}
         for node in tree.iter('node'):
             if node.get(attr) != value or node.get('package') != PACKAGE:
+                continue
+            if args.class_name and node.get('class') != args.class_name:
                 continue
             visible = tuple(map(int, re.findall(r'\d+', node.get('bounds', ''))))
             if len(visible) != 4 or visible[2] <= visible[0] or visible[3] <= visible[1]:

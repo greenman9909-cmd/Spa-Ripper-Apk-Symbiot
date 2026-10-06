@@ -9,6 +9,15 @@ public final class NativeArtwork {
     private static final java.util.Map<String,String> SOURCES=new java.util.LinkedHashMap<String,String>(256,.75f,true){
         protected boolean removeEldestEntry(java.util.Map.Entry<String,String> e){return size()>2048;}
     };
+    static final class Request {
+        private volatile boolean canceled;
+        private java.net.HttpURLConnection active;
+        boolean canceled(){return canceled;}
+        synchronized void attach(java.net.HttpURLConnection connection)throws java.io.IOException {if(canceled){connection.disconnect();throw new java.io.IOException("Artwork canceled");}active=connection;}
+        synchronized void release(java.net.HttpURLConnection connection){if(active==connection)active=null;}
+        void cancel(){canceled=true;java.net.HttpURLConnection connection;synchronized(this){connection=active;active=null;}if(connection!=null)connection.disconnect();}
+        void check()throws java.io.IOException {if(canceled)throw new java.io.IOException("Artwork canceled");}
+    }
     static String wide(String source)throws Exception {
         if(source==null||source.isEmpty()||source.startsWith(PREFIX))return source;
         NativePlayback.publicHttps(source);
@@ -22,16 +31,16 @@ public final class NativeArtwork {
             java.lang.reflect.Method size=model.getClass().getMethod("requestCustomSizeUrl",int.class,int.class);size.setAccessible(true);
             String url=(String)size.invoke(model,width,height),source;synchronized(SOURCES){source=SOURCES.get(url);}if(source==null)return null;
             ClassLoader loader=model.getClass().getClassLoader();Class<?> fetcher=Class.forName("com.bumptech.glide.load.data.d",true,loader),callback=Class.forName("com.bumptech.glide.load.data.d$a",true,loader);
-            final java.util.concurrent.atomic.AtomicBoolean canceled=new java.util.concurrent.atomic.AtomicBoolean();final String input=source;
+            final Request request=new Request();final String input=source;
             Object proxy=java.lang.reflect.Proxy.newProxyInstance(loader,new Class<?>[]{fetcher},(self,method,args)->{
                 switch(method.getName()){
                     case "a":return java.io.InputStream.class;
                     case "d":return Enum.valueOf((Class)Class.forName("mb.a",true,loader),"REMOTE");
-                    case "cancel":canceled.set(true);return null;
+                    case "cancel":request.cancel();return null;
                     case "b":return null;
                     case "e":
-                        try{byte[] jpeg=crop(fetch(input));if(!canceled.get())callback.getMethod("f",Object.class).invoke(args[1],new java.io.ByteArrayInputStream(jpeg));}
-                        catch(Exception failure){if(!canceled.get())callback.getMethod("c",Exception.class).invoke(args[1],failure);}return null;
+                        try{request.check();byte[] bytes=fetch(input,request);request.check();byte[] jpeg=crop(bytes);if(!request.canceled())callback.getMethod("f",Object.class).invoke(args[1],new java.io.ByteArrayInputStream(jpeg));}
+                        catch(Exception failure){if(!request.canceled())callback.getMethod("c",Exception.class).invoke(args[1],failure);}return null;
                     case "toString":return "APKForgeArtworkFetcher";
                     case "hashCode":return System.identityHashCode(self);
                     case "equals":return self==args[0];
@@ -54,12 +63,14 @@ public final class NativeArtwork {
         if(scaled!=cropped)scaled.recycle();if(cropped!=input)cropped.recycle();input.recycle();return output.toByteArray();
     }
     static int[] cropBounds(int w,int h){int cw=w,ch=h;if((long)w*9>(long)h*16)cw=Math.max(1,h*16/9);else ch=Math.max(1,w*9/16);return new int[]{(w-cw)/2,(h-ch)/2,cw,ch};}
-    private static byte[] fetch(String source)throws Exception {
+    private static byte[] fetch(String source,Request request)throws Exception {
         for(int redirects=0;redirects<4;redirects++){
+            request.check();
             NativePlayback.publicHttps(source);java.net.HttpURLConnection c=(java.net.HttpURLConnection)new java.net.URL(source).openConnection();c.setInstanceFollowRedirects(false);c.setConnectTimeout(10000);c.setReadTimeout(12000);c.setRequestProperty("User-Agent","APKForge/0.4 (Android)");
+            request.attach(c);
             try{int status=c.getResponseCode();if(status>=300&&status<400){source=new java.net.URI(source).resolve(c.getHeaderField("Location")).toString();continue;}if(status!=200)throw new java.io.IOException("Artwork unavailable");
-                try(java.io.InputStream in=c.getInputStream();java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){if(out.size()+n>6*1024*1024)throw new java.io.IOException("Artwork too large");out.write(b,0,n);}return out.toByteArray();}}
-            finally{c.disconnect();}
+                try(java.io.InputStream in=c.getInputStream();java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream()){byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1){request.check();if(out.size()+n>6*1024*1024)throw new java.io.IOException("Artwork too large");out.write(b,0,n);}request.check();return out.toByteArray();}}
+            finally{request.release(c);c.disconnect();}
         }throw new java.io.IOException("Artwork redirect limit");
     }
     public static String url(String id,Object imageType){

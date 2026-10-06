@@ -1,6 +1,6 @@
 # Original-UI app continuation guide
 
-Updated 2026-10-06 for **0.4.10 / 1000050**. The user wants production readiness; this build remains a tested preview. Compilation, model contracts and isolated playback are not complete product acceptance.
+Updated 2026-10-06 for **0.4.11 / 1000051**. The user wants production readiness; this build remains a tested preview. Compilation and model contracts are not complete product acceptance.
 
 ## Latest requirements
 
@@ -10,9 +10,19 @@ Preserve the supplied APK's original screens, resources, profile picker/creator,
 
 **Require an account; remove guest access.** This supersedes earlier optional-login requests. Prefer hard subtitles when explicitly available in the selected language, allowing separate tracks otherwise. Spanish and other real provider languages are wanted. Never invent availability or claim unaudited translation accuracy.
 
-Continue branch `codex/evidence-driven-apk-analysis`, draft PR [#1](https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot/pull/1). Publishing here is authorized. Release `v0.4.10-native-preview`; APK `Original-UI-AniPM-v0.4.10.apk`. Never use credentials pasted in chat, uninstall the user's official app or expose secrets. Only use the explicitly authorized preview/device scope. The user explicitly authorized USB debugging and updating their existing preview on their physical phone; retain that narrow scope and verify the intended device before each mutation. WebLoom was paused with authorization; do not delete/resume it or change billing.
+Continue branch `codex/evidence-driven-apk-analysis`, draft PR [#1](https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot/pull/1). Publishing here is authorized. Release `v0.4.11-native-preview`; APK `Original-UI-AniPM-v0.4.11.apk`. Never use credentials pasted in chat, uninstall the user's official app or expose secrets. Only use the explicitly authorized preview/device scope. The user explicitly authorized USB debugging and updating their existing preview on their physical phone; retain that narrow scope and verify the intended device before each mutation. WebLoom was paused with authorization; do not delete/resume it or change billing.
 
-## New in 0.4.10 — start here
+## New in 0.4.11 — start here
+
+Read [VALIDATION_0.4.11.md](VALIDATION_0.4.11.md). The existing video service's actual episode API now backs up ani.pm. Validate positive matching MAL identity and exact episode/audio IDs; reject its no-MAL branch, which guesses availability. Live counts: Naruto 220, Frieren 28, Bleach 366. The preceding candidate visibly played Naruto E1 and navigated to E2 in Medium Phone 2. Naruto E1 exposed English only; Spanish was verified separately on Frieren at the fetch/conversion boundary.
+
+Watch/skip calls share a bounded short-lived bundle cache. Direct HLS with matching provider headers is manifest-validated. Related-season loads are coalesced, bounded and concurrent; unknown requested availability cannot redirect to another season. Offscreen image cancellation disconnects the network fetch. Original screens are retained; production/offline acceptance remains pending.
+
+Current authorized test device: `emulator-5556`, exact AVD `Medium_Phone_API_37.0_2`. The owner authorized updates/testing here. Android Studio replaced the candidate with a differently signed 9.99.0 during acceptance. The owner stopped Run and explicitly authorized an app-only reinstall here with local-data loss. That deletion approval is limited to this instance. The withdrawn cache request does not authorize further cache deletion. The owned isolated probe AVD remains `emulator-5560`, `APKForge_Original_UI`.
+
+Current release is `v0.4.11-native-preview`, APK `Original-UI-AniPM-v0.4.11.apk`. The historical evidence below remains useful; newer results take precedence.
+
+## Historical 0.4.10 evidence
 
 Read [VALIDATION_0.4.10.md](VALIDATION_0.4.10.md) before interpreting historical device results below. Final APK passes **44 Python tests / 124 original-model contracts**. Candidate live checks pass **16 Home rails / 212 distinct collection cards**, stable feed/catalog pages, One Piece E1 HLS model/manifest, intro metadata and Frieren E1 English/both Spanish subtitle conversions. Final APK adds related-title fallback and the reproduced crash/account fixes. Authenticated Medium Phone checks loaded native Home/My Lists/Browse and two title details without process restart. Visible playback and physical-device acceptance remain pending.
 

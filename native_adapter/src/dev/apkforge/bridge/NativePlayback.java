@@ -34,6 +34,7 @@ public final class NativePlayback {
     private static final Pattern ASSET=Pattern.compile("ANI([0-9]+)E([0-9]+)(D)?");
     private static final Pattern DATA_ID=Pattern.compile("data-id\\s*=\\s*[\"']([0-9]{1,12})[\"']");
     private static final Object[] RESOLVE_LOCKS=new Object[16];static{for(int i=0;i<RESOLVE_LOCKS.length;i++)RESOLVE_LOCKS[i]=new Object();}
+    private static final NativeWatchCache WATCH=new NativeWatchCache(()->android.os.SystemClock.elapsedRealtime());
     private static final LinkedHashMap<String,Cached> CACHE=new LinkedHashMap<String,Cached>(16,.75f,true){
         protected boolean removeEldestEntry(Map.Entry<String,Cached> e){return size()>16;}
     };
@@ -76,9 +77,7 @@ public final class NativePlayback {
         String cacheKey=asset+":"+preferred;
         synchronized(CACHE){Cached c=CACHE.get(cacheKey);if(c!=null&&android.os.SystemClock.elapsedRealtime()-c.time<60000)return new JSONObject(c.json);}
         String audio=m.group(3)==null?"sub":"dub";
-        JSONObject response=new JSONObject(get("https://anivexaapi-aniko2.hf.space/api/watch/"+m.group(1)+"/"+audio+"/"+m.group(2),null));
-        JSONObject bundle=response.optJSONObject(audio.equals("sub")?"ssub":"sdub");
-        if(bundle==null)throw new IOException("Requested audio unavailable");
+        JSONObject bundle=watchBundle(asset);
         JSONArray candidates=bundle.optJSONArray("streams");if(candidates==null)throw new IOException("No sources");
         HashSet<String> tried=new HashSet<>();
         // Prefer an explicitly labelled burned-in source only for the selected language.
@@ -88,12 +87,14 @@ public final class NativePlayback {
             if(pass==0&&!sourceHard.equals(preferred))continue;
             if(pass==1&&!sourceHard.isEmpty()&&!sourceHard.equals(preferred))continue;
             String embed=source.optString("url");
-            if(!embedHost(embed)||!tried.add(embed))continue;
+            boolean direct=directSource(source);
+            if((!direct&&!embedHost(embed))||!tried.add(embed))continue;
             try {
-                Matcher id=DATA_ID.matcher(get(embed,REFERER));if(!id.find())continue;
-                JSONObject sources=new JSONObject(get(REFERER+"stream/getSources?id="+id.group(1),embed));
-                JSONObject decoded=decodeSources(sources.getString("enc"));
-                String file=decoded.getString("file");publicHttps(file);
+                JSONObject sources=new JSONObject(),decoded=new JSONObject();String file=embed;
+                if(!direct){Matcher id=DATA_ID.matcher(get(embed,REFERER));if(!id.find())continue;
+                    sources=new JSONObject(get(REFERER+"stream/getSources?id="+id.group(1),embed));
+                    decoded=decodeSources(sources.getString("enc"));file=decoded.getString("file");}
+                publicHttps(file);
                 // Reject HTML/error wrappers before passing a URL to the original player.
                 String manifest=get(file,REFERER);if(!manifest.trim().startsWith("#EXTM3U"))continue;
                 String hard=hardLocale(decoded);if(hard.isEmpty())hard=hardLocale(sources);if(hard.isEmpty())hard=sourceHard;
@@ -117,16 +118,19 @@ public final class NativePlayback {
         synchronized(SKIPS){String data=SKIPS.get(asset);if(data!=null)return new JSONObject(data);}
         // Metadata is requested before stream resolution in the retained player.
         // Obtain the same public bundle without resolving media a second time.
-        Matcher match=ASSET.matcher(asset);match.matches();String audio=match.group(3)==null?"sub":"dub";
         try {
-            JSONObject response=new JSONObject(get("https://anivexaapi-aniko2.hf.space/api/watch/"+match.group(1)+"/"+audio+"/"+match.group(2),null));
-            JSONObject bundle=response.optJSONObject(audio.equals("sub")?"ssub":"sdub");
+            JSONObject bundle=watchBundle(asset);
             JSONObject skips=mapSkipEvents(asset,bundle);
             if(skips.has("intro")||skips.has("credits")){synchronized(SKIPS){SKIPS.put(asset,skips.toString());}return skips;}
-            // Source response can include skip ranges absent from the bundle.
-            resolve(asset);synchronized(SKIPS){String data=SKIPS.get(asset);if(data!=null)return new JSONObject(data);}
+            // Optional skips must never trigger a second full media resolution.
+            // Source-only ranges become available after normal stream resolution.
         }catch(Exception unavailable){Log.w("APKForgeNative","Skip metadata unavailable; playback remains available");}
         return new JSONObject().put("mediaId",asset);
+    }
+    static JSONObject watchBundle(String asset)throws Exception {
+        Matcher match=ASSET.matcher(asset);if(!match.matches())throw new IOException("Unsupported replacement asset");
+        String audio=match.group(3)==null?"sub":"dub";
+        return WATCH.get(asset,()->{JSONObject response=new JSONObject(get(NativeEpisodes.BASE+"/watch/"+match.group(1)+"/"+audio+"/"+match.group(2),null));JSONObject bundle=response.optJSONObject(audio.equals("sub")?"ssub":"sdub");if(bundle==null||bundle.optJSONArray("streams")==null)throw new IOException("Requested audio unavailable");return bundle;});
     }
     static JSONObject mapSkipEvents(String asset,JSONObject provider)throws Exception {
         JSONObject result=new JSONObject().put("mediaId",asset);if(provider==null)return result;
@@ -202,6 +206,7 @@ public final class NativePlayback {
         }catch(Exception e){Log.e("APKForgeNative","Media headers unavailable",e);}
     }
     private static boolean embedHost(String url){try{URI u=publicHttps(url);return "megaplay.buzz".equals(u.getHost())&&u.getPath().startsWith("/stream/");}catch(Exception e){return false;}}
+    static boolean directSource(JSONObject source){try{publicHttps(source.optString("url"));return "hls".equals(source.optString("type"))&&REFERER.equals(source.optString("referer"));}catch(Exception invalid){return false;}}
     static URI publicHttps(String url)throws Exception {
         URI u=new URI(url);String h=u.getHost();
         if(!"https".equals(u.getScheme())||u.getUserInfo()!=null||(u.getPort()!=-1&&u.getPort()!=443)||h==null||h.indexOf('.')<0||h.matches("[0-9.]+")||h.endsWith(".local")||h.endsWith(".localhost")||h.contains(":"))throw new IOException("Invalid public media URL");

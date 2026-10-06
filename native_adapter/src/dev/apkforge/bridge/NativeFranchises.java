@@ -6,6 +6,9 @@ import java.util.*;
 
 /** Only explicit same-format TV prequel/sequel edges become seasons. No title guessing. */
 final class NativeFranchises {
+    private static final Object[] DETAIL_LOCKS=new Object[16];static{for(int i=0;i<DETAIL_LOCKS.length;i++)DETAIL_LOCKS[i]=new Object();}
+    private static final java.util.concurrent.ThreadPoolExecutor SEASONS=new java.util.concurrent.ThreadPoolExecutor(3,3,30,java.util.concurrent.TimeUnit.SECONDS,new java.util.concurrent.ArrayBlockingQueue<Runnable>(16),task->{Thread thread=new Thread(task,"APKForgeSeasonDetails");thread.setDaemon(true);return thread;});
+    interface Fetch {JSONObject get(int id)throws Exception;}
     static final String FIELDS="id idMal format startDate{year month day} title{english romaji native} description(asHtml:false) coverImage{extraLarge large} bannerImage episodes genres status isAdult relations{edges{relationType node{id format status isAdult}}}";
     private static final Map<Integer,JSONObject> RECORDS=new LinkedHashMap<Integer,JSONObject>(128,.75f,true){
         protected boolean removeEldestEntry(Map.Entry<Integer,JSONObject> e){return size()>512;}
@@ -13,7 +16,7 @@ final class NativeFranchises {
     private static final Map<Integer,Entry> DETAILS=new LinkedHashMap<Integer,Entry>(8,.75f,true){
         protected boolean removeEldestEntry(Map.Entry<Integer,NativeFranchises.Entry> e){return size()>8;}
     };
-    private static final class Entry {final JSONObject value;final long expires;Entry(JSONObject v){value=v;expires=android.os.SystemClock.elapsedRealtime()+(v.optBoolean("_availabilityUnknown")?15000:120000);}}
+    private static final class Entry {final JSONObject value;final long expires;Entry(JSONObject v){value=v;expires=android.os.SystemClock.elapsedRealtime()+(v.optBoolean("_availabilityUnknown")||v.optBoolean("_detailsIncomplete")?15000:120000);}}
     static void remember(JSONArray records){synchronized(RECORDS){for(int i=0;i<records.length();i++){JSONObject r=records.optJSONObject(i);if(r!=null&&r.optInt("anilistId")>0)RECORDS.put(r.optInt("anilistId"),r);}}}
     private static boolean tv(JSONObject r){return r!=null&&("TV".equals(r.optString("format"))||"TV_SHORT".equals(r.optString("format")))&&!r.optBoolean("adult")&&!"NOT_YET_RELEASED".equals(r.optString("status"));}
     static List<Integer> links(JSONObject record,String direction){
@@ -42,6 +45,9 @@ final class NativeFranchises {
         }BackendBridge.cache(out);return out;
     }
     static JSONObject series(int id)throws Exception {
+        synchronized(DETAIL_LOCKS[(id&Integer.MAX_VALUE)%DETAIL_LOCKS.length]){return details(id);}
+    }
+    private static JSONObject details(int id)throws Exception {
         JSONObject known=BackendBridge.cachedTitle(id);if(known!=null&&known.has("episodeList")&&!known.has("_detailsLoadedAt"))return known;
         Entry hit;synchronized(DETAILS){hit=DETAILS.get(id);}if(hit!=null&&hit.expires>android.os.SystemClock.elapsedRealtime())return hit.value;
         // Batch a bounded frontier; metadata failure keeps the individual working title.
@@ -52,10 +58,20 @@ final class NativeFranchises {
             JSONArray media=NativeMetadata.graph("query($ids:[Int]){Page(perPage:16){media(id_in:$ids,type:ANIME,isAdult:false){"+FIELDS+"}}}",new JSONObject().put("ids",queryIds)).getJSONObject("Page").getJSONArray("media");
             JSONArray records=new JSONArray();for(int i=0;i<media.length();i++){JSONObject r=NativeDiscovery.record(media.getJSONObject(i));records.put(r);for(String d:new String[]{"PREQUEL","SEQUEL"})for(int n:links(r,d))if(!visited.contains(n))pending.add(n);}remember(records);
         }}catch(Exception unavailable){android.util.Log.w("APKForgeMetadata","Season relationships unavailable; retaining individual title");}
-        List<Integer> ids=chain(id);List<JSONObject> titles=new ArrayList<>();
-        for(int n:ids)try{JSONObject source=BackendBridge.series(n);JSONArray ep=source.optJSONArray("episodeList");if(ep!=null&&ep.length()>0)titles.add(source);}catch(Exception unavailable){if(n==id)throw unavailable;}
-        if(titles.size()<2){JSONObject single=BackendBridge.series(id);synchronized(DETAILS){DETAILS.put(id,new Entry(single));}return single;}
-        JSONObject merged=merge(titles);Entry entry=new Entry(merged);synchronized(DETAILS){for(int n:ids)DETAILS.put(n,entry);}return merged;
+        List<Integer> ids=chain(id);JSONObject requested=BackendBridge.series(id);
+        List<JSONObject> titles=relatedSources(ids,id,requested,BackendBridge::series,18000);
+        if(titles.size()<2){JSONObject single=copy(requested);if(ids.size()>1)single.put("_detailsIncomplete",true);synchronized(DETAILS){DETAILS.put(id,new Entry(single));}return single;}
+        JSONObject merged=merge(titles);if(titles.size()<ids.size())merged.put("_detailsIncomplete",true);Entry entry=new Entry(merged);synchronized(DETAILS){for(JSONObject loaded:titles)DETAILS.put(loaded.getInt("anilistId"),entry);}return merged;
+    }
+    static List<JSONObject> relatedSources(List<Integer> ids,int requested,JSONObject current,Fetch fetch,long budgetMillis)throws Exception {
+        if(current==null||current.optInt("anilistId")!=requested||current.optJSONArray("episodeList")==null||current.optJSONArray("episodeList").length()==0)return Collections.emptyList();
+        Map<Integer,java.util.concurrent.Future<JSONObject>> tasks=new LinkedHashMap<>();
+        try{for(int n:ids)if(n!=requested)try{tasks.put(n,SEASONS.submit(()->fetch.get(n)));}catch(java.util.concurrent.RejectedExecutionException busy){/* Keep the requested title usable when season workers are full. */}
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(Math.max(1,budgetMillis));List<JSONObject> out=new ArrayList<>();
+            for(int n:ids){JSONObject record=current;if(n!=requested){java.util.concurrent.Future<JSONObject> task=tasks.get(n);if(task==null)continue;try{record=task.get(Math.max(1,deadline-System.nanoTime()),java.util.concurrent.TimeUnit.NANOSECONDS);}catch(java.util.concurrent.ExecutionException|java.util.concurrent.TimeoutException unavailable){continue;}}
+                JSONArray episodes=record==null?null:record.optJSONArray("episodeList");if(record!=null&&record.optInt("anilistId")==n&&episodes!=null&&episodes.length()>0)out.add(record);
+            }return out;
+        }finally{for(java.util.concurrent.Future<JSONObject> task:tasks.values())if(!task.isDone())task.cancel(true);SEASONS.purge();}
     }
     static JSONObject artwork(int id){synchronized(DETAILS){Entry entry=DETAILS.get(id);return entry==null?null:entry.value;}}
     static JSONObject merge(List<JSONObject> sources)throws Exception {
