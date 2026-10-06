@@ -76,14 +76,18 @@ public final class BackendBridge {
         }
         Log.i(TAG,"Catalog request "+path); // No query, headers, cookies or credentials.
         int status=200;String data;
-        try{data=route(loader,request,uri).toString();}
+        try{JSONObject payload=route(loader,request,uri);status=successStatus(path,payload);data=status==204?"":payload.toString();}
         catch(HttpFailure e){status=e.status;data=new JSONObject().put("error",e.getMessage()).toString();}
         catch(UnsupportedOperationException e){status=501;data=new JSONObject().put("error","unmapped-native-route").toString();Log.w(TAG,"Unmapped native route "+path);}
         catch(Exception e){status=503;data=new JSONObject().put("error","provider-unavailable").toString();Log.w(TAG,"Provider request failed for "+path+": "+e.getClass().getSimpleName());}
+        return response(loader,request,status,data);
+    }
+    static int successStatus(String path,JSONObject payload){JSONArray data=payload.optJSONArray("data");return path.contains("/up_next/")&&data!=null&&data.length()==0?204:200;}
+    static Object response(ClassLoader loader,Object request,int status,String data)throws Exception {
         Class<?> responseBuilder=Class.forName("me0.e0$a",true,loader);Object response=responseBuilder.getConstructor().newInstance();
         responseBuilder.getField("a").set(response,request);
         @SuppressWarnings({"unchecked","rawtypes"}) Object protocol=Enum.valueOf((Class)Class.forName("me0.z",true,loader),"HTTP_1_1");
-        responseBuilder.getField("b").set(response,protocol);responseBuilder.getField("c").setInt(response,status);responseBuilder.getField("d").set(response,status==200?"OK":"Adapter incomplete");
+        responseBuilder.getField("b").set(response,protocol);responseBuilder.getField("c").setInt(response,status);responseBuilder.getField("d").set(response,status==204?"No Content":status==200?"OK":"Adapter incomplete");
         Class<?> mediaType=Class.forName("me0.w",true,loader);
         Object body=Class.forName("me0.f0$b",true,loader).getMethod("b",String.class,mediaType).invoke(null,data,null);
         responseBuilder.getField("g").set(response,body);return responseBuilder.getMethod("a").invoke(response);
@@ -97,7 +101,7 @@ public final class BackendBridge {
     private static JSONObject route(ClassLoader loader,Object request,Uri uri) throws Exception {
         String path=uri.getPath();
         if(path.startsWith("/content/v2/")||path.startsWith("/talkbox/")||path.contains("/accounts/v1/me")){
-            CloudSession.init(loader);CloudSession.requireSession();
+            CloudSession.init(loader);CloudSession.requireSession();NativeAccountState.initialize(loader);
         }
         if(path.contains("config_delta"))return new JSONObject().put("config_delta",new JSONObject());
         if(path.endsWith("index/v2"))return new JSONObject().put("service_available",true);
@@ -135,7 +139,8 @@ public final class BackendBridge {
         if(path.contains("/music/featured/"))return envelope(new JSONArray());
         if(path.contains("/similar_to/")){
             String id=path.substring(path.lastIndexOf('/')+1);JSONObject title=series(Integer.parseInt(id.substring(3)));
-            JSONArray genres=title.optJSONArray("genres"),found=api("/top?range=all&adult=0&limit=100").getJSONArray("data"),similar=new JSONArray();cache(found);
+            JSONArray genres=title.optJSONArray("genres"),found,similar=new JSONArray();
+            try{found=api("/top?range=all&adult=0&limit=100").getJSONArray("data");}catch(java.io.IOException unavailable){return NativeDiscovery.related(title);}cache(found);
             for(int i=0;i<found.length()&&similar.length()<20;i++){
                 JSONObject candidate=found.getJSONObject(i);if(candidate.getInt("anilistId")==title.getInt("anilistId"))continue;
                 JSONArray cg=candidate.optJSONArray("genres");boolean match=false;
@@ -164,10 +169,12 @@ public final class BackendBridge {
             synchronized(p){JSONObject state=p.state("custom-lists");JSONObject result=NativeLists.route(state,uri,method,raw.isEmpty()?new JSONObject():new JSONObject(raw));
                 if(!method.equals("GET"))p.saveState("custom-lists",state);return result;}
         }
-        if(path.contains("/watch-history")){
+        if(path.contains("/watch-history")||path.endsWith("/history")){
             String method=(String)request.getClass().getField("b").get(request);
-            if(method.equals("GET"))return envelope(new JSONArray()); // Native playback has not produced history yet.
-            throw new HttpFailure(501,"history-writes-not-configured");
+            LocalProfiles p=profiles(loader);JSONObject state;
+            synchronized(p){state=p.state("playheads");if(method.equals("DELETE")){NativeHistory.delete(state,path.substring(path.lastIndexOf('/')+1));p.saveState("playheads",state);return new JSONObject();}}
+            if(method.equals("GET"))return NativeHistory.rows(state,uri);
+            throw new HttpFailure(405,"unsupported-history-method");
         }
         if(path.contains("/accounts/v1/me/multiprofile")||path.endsWith("/accounts/v1/usernames")){
             String method=(String)request.getClass().getField("b").get(request);
@@ -207,7 +214,10 @@ public final class BackendBridge {
         if(path.endsWith("/browse")||path.contains("/discover/apkforge-")){
             String seasonal=uri.getQueryParameter("seasonal_tag");
             String query=seasonal!=null?NativeHomeFeed.seasonalQuery(seasonal):path.endsWith("/browse")?"/top?range=all&adult=0&limit=100":NativeHomeFeed.query(path.substring(path.lastIndexOf("apkforge-")+9));
-            JSONArray found=api(query).getJSONArray("data");cache(found);
+            JSONArray found;
+            try{found=api(query).getJSONArray("data");}
+            catch(java.io.IOException unavailable){if(!path.contains("/discover/apkforge-"))throw unavailable;return NativeDiscovery.route(NativeDiscovery.collectionUri(path.substring(path.lastIndexOf("apkforge-")+9),integer(uri.getQueryParameter("start"),0),integer(uri.getQueryParameter("n"),25)));}
+            cache(found);
             JSONArray converted=new JSONArray();int start=Math.max(0,integer(uri.getQueryParameter("start"),0)),limit=integer(uri.getQueryParameter("n"),25),seen=0;
             for(int i=0;i<found.length()&&converted.length()<Math.max(1,Math.min(limit,100));i++){
                 JSONObject record=found.getJSONObject(i);
@@ -229,28 +239,32 @@ public final class BackendBridge {
     }
     private static JSONObject profileContent(LocalProfiles profile,Uri uri,String method,JSONObject body)throws Exception {
         String path=uri.getPath(),category=path.contains("/watchlist")?"watchlist":"playheads";
+        if(category.equals("playheads")&&!method.equals("GET")&&!method.equals("DELETE")){synchronized(profile){JSONObject state=profile.state(category);NativeHistory.save(state,body);profile.saveState(category,state);return new JSONObject();}}
+        JSONObject saved;
         synchronized(profile){
-            JSONObject saved=profile.state(category);
+            saved=profile.state(category);
             if(!method.equals("GET")){
                 String id=body.optString("content_id",path.substring(path.lastIndexOf('/')+1));
                 if(!id.matches("ANI[0-9]+(?:E[0-9]+D?)?"))throw new HttpFailure(400,"invalid-content-id");
                 if(method.equals("DELETE"))saved.remove(id);
-                else if(category.equals("watchlist"))saved.put(id,new JSONObject().put("id",id).put("is_favorite",body.optBoolean("is_favorite")));
-                else saved.put(id,new JSONObject().put("content_id",id).put("playhead",Math.max(0,body.optLong("playhead")))
-                    .put("fully_watched",false).put("last_modified",new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'",java.util.Locale.US){{setTimeZone(java.util.TimeZone.getTimeZone("UTC"));}}.format(new java.util.Date())));
+                else saved.put(id,new JSONObject().put("id",id).put("is_favorite",body.optBoolean("is_favorite")));
                 profile.saveState(category,saved);return new JSONObject();
             }
-            JSONArray data=new JSONArray();java.util.Iterator<String> ids=saved.keys();
-            while(ids.hasNext()){
-                String id=ids.next();JSONObject item=saved.getJSONObject(id);
-                if(path.contains("/discover/")&&category.equals("watchlist")){
-                    JSONObject title=series(Integer.parseInt(id.substring(3)));data.put(new JSONObject().put("panel",NativeCatalog.watchlistPanel(title))
-                        .put("is_favorite",item.optBoolean("is_favorite")).put("playhead",0).put("never_watched",true).put("fully_watched",false));
-                }else if(category.equals("watchlist")||uri.getQueryParameter("content_ids")==null||java.util.Arrays.asList(uri.getQueryParameter("content_ids").split(",")).contains(id))data.put(item);
-            }
-            return envelope(data);
         }
+        // The saved JSON is a private snapshot. Provider I/O must not hold the
+        // profile lock needed by player preferences, progress and switching.
+        JSONArray data=new JSONArray();java.util.Iterator<String> ids=saved.keys();
+        while(ids.hasNext()){
+            String id=ids.next();JSONObject item=saved.getJSONObject(id);
+            if(path.contains("/discover/")&&category.equals("watchlist")){
+                try{JSONObject title=NativeFranchises.series(Integer.parseInt(id.substring(3)));data.put(new JSONObject().put("panel",NativeCatalog.watchlistPanel(title))
+                    .put("is_favorite",item.optBoolean("is_favorite")).put("playhead",0).put("never_watched",true).put("fully_watched",false));}
+                catch(Exception unavailable){Log.w(TAG,"Watchlist title temporarily unavailable");}
+            }else if(category.equals("watchlist")||uri.getQueryParameter("content_ids")==null||java.util.Arrays.asList(uri.getQueryParameter("content_ids").split(",")).contains(id))data.put(item);
+        }
+        return envelope(data);
     }
+
     private static int integer(String value,int fallback){try{return Integer.parseInt(value);}catch(Exception e){return fallback;}}
     static void cache(JSONArray data)throws Exception{synchronized(titles){for(int i=0;i<data.length();i++){
         JSONObject t=data.getJSONObject(i);int id=t.getInt("anilistId");JSONObject existing=titles.get(id);
@@ -283,7 +297,20 @@ public final class BackendBridge {
         JSONObject title;synchronized(titles){title=titles.get(id);}
         if(title!=null&&title.has("episodeList")&&(!title.has("_detailsLoadedAt")||android.os.SystemClock.elapsedRealtime()-title.optLong("_detailsLoadedAt")<120000))return title;
         try{JSONObject fresh=api("/series/"+id+"?adult=0").getJSONObject("data");NativeSeasons.apply(fresh,null);NativeMetadata.enrich(fresh);fresh.put("_detailsLoadedAt",android.os.SystemClock.elapsedRealtime());synchronized(titles){titles.put(id,fresh);trimDetails();}return fresh;}
-        catch(java.io.IOException unavailable){if(title!=null&&title.has("episodeList"))return title;throw unavailable;}
+        catch(java.io.IOException unavailable){
+            if(title!=null&&title.has("episodeList")&&!title.optBoolean("_availabilityUnknown"))return title;
+            JSONObject summary=title!=null?title:NativeDiscovery.detail(id);
+            JSONObject fallback=unavailableDetail(summary);NativeMetadata.enrich(fallback);
+            synchronized(titles){titles.put(id,fallback);trimDetails();}return fallback;
+        }
+    }
+    static JSONObject unavailableDetail(JSONObject summary)throws Exception {
+        JSONObject out=new JSONObject();java.util.Iterator<String> keys=summary.keys();while(keys.hasNext()){String k=keys.next();out.put(k,summary.get(k));}
+        // Metadata counts do not establish playback availability. An empty episode
+        // list keeps the original details screen valid without inventing audio.
+        String notice="Episodes are temporarily unavailable. Please try again.";
+        String description=summary.optString("synopsis","");if(!description.contains(notice))out.put("synopsis",description+(description.isEmpty()?"":"\n\n")+notice);
+        return out.put("episodeList",new JSONArray()).put("_availabilityUnknown",true).put("_detailsLoadedAt",android.os.SystemClock.elapsedRealtime()-105000);
     }
     static void trimDetails()throws Exception {
         int count=0;for(JSONObject record:titles.values())if(record.has("episodeList"))count++;
@@ -301,7 +328,7 @@ public final class BackendBridge {
     static void invalidate(String path){synchronized(responses){responses.remove(path);}}
     static JSONObject api(String path)throws Exception{
         synchronized(responses){CachedResponse hit=responses.get(path);if(hit!=null&&hit.expires>android.os.SystemClock.elapsedRealtime())return new JSONObject(hit.json);}
-        HttpsURLConnection c=(HttpsURLConnection)new URL(BASE+path).openConnection();c.setConnectTimeout(15000);c.setReadTimeout(20000);c.setRequestProperty("User-Agent","APKForge/0.4 (Android)");c.setRequestProperty("Accept","application/json");
-        try{if(c.getResponseCode()!=200)throw new java.io.IOException("Provider HTTP "+c.getResponseCode());try(InputStream in=c.getInputStream()){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[8192];int n;while((n=in.read(buffer))!=-1){if(bytes.size()+n>8*1024*1024)throw new java.io.IOException("Catalog response too large");bytes.write(buffer,0,n);}String json=new String(bytes.toByteArray(),StandardCharsets.UTF_8);JSONObject result=new JSONObject(json);synchronized(responses){responses.put(path,new CachedResponse(json));trimResponses();}return result;}}finally{c.disconnect();}
+        JSONObject result=NativeMetadata.request(BASE+path,null,120000);
+        synchronized(responses){responses.put(path,new CachedResponse(result.toString()));trimResponses();}return result;
     }
 }

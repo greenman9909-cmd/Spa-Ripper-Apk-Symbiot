@@ -13,7 +13,7 @@ final class NativeFranchises {
     private static final Map<Integer,Entry> DETAILS=new LinkedHashMap<Integer,Entry>(8,.75f,true){
         protected boolean removeEldestEntry(Map.Entry<Integer,NativeFranchises.Entry> e){return size()>8;}
     };
-    private static final class Entry {final JSONObject value;final long expires;Entry(JSONObject v){value=v;expires=android.os.SystemClock.elapsedRealtime()+120000;}}
+    private static final class Entry {final JSONObject value;final long expires;Entry(JSONObject v){value=v;expires=android.os.SystemClock.elapsedRealtime()+(v.optBoolean("_availabilityUnknown")?15000:120000);}}
     static void remember(JSONArray records){synchronized(RECORDS){for(int i=0;i<records.length();i++){JSONObject r=records.optJSONObject(i);if(r!=null&&r.optInt("anilistId")>0)RECORDS.put(r.optInt("anilistId"),r);}}}
     private static boolean tv(JSONObject r){return r!=null&&("TV".equals(r.optString("format"))||"TV_SHORT".equals(r.optString("format")))&&!r.optBoolean("adult")&&!"NOT_YET_RELEASED".equals(r.optString("status"));}
     static List<Integer> links(JSONObject record,String direction){
@@ -47,7 +47,8 @@ final class NativeFranchises {
         // Batch a bounded frontier; metadata failure keeps the individual working title.
         Set<Integer> visited=new HashSet<>();List<Integer> pending=new ArrayList<>();pending.add(id);
         try{for(int pass=0;pass<8&&!pending.isEmpty()&&visited.size()<16;pass++){
-            JSONArray queryIds=new JSONArray();for(int n:pending)if(visited.add(n)&&visited.size()<=16)queryIds.put(n);pending.clear();if(queryIds.length()==0)break;
+            JSONArray queryIds=new JSONArray();List<Integer> frontier=new ArrayList<>(pending);pending.clear();
+            for(int n:frontier)if(visited.add(n)&&visited.size()<=16){JSONObject r;synchronized(RECORDS){r=RECORDS.get(n);}if(r!=null&&r.has("relations")&&android.os.SystemClock.elapsedRealtime()-r.optLong("_relationshipsLoadedAt",-120000)<120000){for(String d:new String[]{"PREQUEL","SEQUEL"})for(int linked:links(r,d))if(!visited.contains(linked))pending.add(linked);}else queryIds.put(n);}if(queryIds.length()==0)continue;
             JSONArray media=NativeMetadata.graph("query($ids:[Int]){Page(perPage:16){media(id_in:$ids,type:ANIME,isAdult:false){"+FIELDS+"}}}",new JSONObject().put("ids",queryIds)).getJSONObject("Page").getJSONArray("media");
             JSONArray records=new JSONArray();for(int i=0;i<media.length();i++){JSONObject r=NativeDiscovery.record(media.getJSONObject(i));records.put(r);for(String d:new String[]{"PREQUEL","SEQUEL"})for(int n:links(r,d))if(!visited.contains(n))pending.add(n);}remember(records);
         }}catch(Exception unavailable){android.util.Log.w("APKForgeMetadata","Season relationships unavailable; retaining individual title");}

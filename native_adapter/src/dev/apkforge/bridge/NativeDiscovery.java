@@ -11,15 +11,16 @@ final class NativeDiscovery {
     private static final int PAGE_SIZE=50;
     private static final String[] GENRES={"Action","Adventure","Comedy","Drama","Fantasy","Horror","Mahou Shoujo","Mecha","Music","Mystery","Psychological","Romance","Sci-Fi","Slice of Life","Sports","Supernatural","Thriller"};
     private static final String[] SEASONS={"WINTER","SPRING","SUMMER","FALL"};
-    private static final String QUERY="query($page:Int,$search:String,$genres:[String],$sort:[MediaSort],$season:MediaSeason,$year:Int,$status:MediaStatus){Page(page:$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,isAdult:false,search:$search,genre_in:$genres,sort:$sort,season:$season,seasonYear:$year,status:$status){"+NativeFranchises.FIELDS+"}}}";
+    private static final String QUERY="query($page:Int,$search:String,$genres:[String],$sort:[MediaSort],$season:MediaSeason,$year:Int,$status:MediaStatus,$format:MediaFormat){Page(page:$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,isAdult:false,search:$search,genre_in:$genres,sort:$sort,season:$season,seasonYear:$year,status:$status,format:$format){"+NativeFranchises.FIELDS+"}}}";
     private static final java.util.Map<String,SearchState> SEARCHES=new java.util.LinkedHashMap<String,SearchState>(8,.75f,true){protected boolean removeEldestEntry(java.util.Map.Entry<String,SearchState> e){return size()>8;}};
-    private static final class SearchState {final JSONArray records=new JSONArray();final long expires=android.os.SystemClock.elapsedRealtime()+120000;int page=0;boolean more=true;}
+    private static final class SearchState {final JSONArray records=new JSONArray(),cards=new JSONArray();final java.util.Set<Integer> seen=new java.util.HashSet<>();final long expires=android.os.SystemClock.elapsedRealtime()+120000;int page=0;boolean more=true;}
     static boolean handles(String path){return path.endsWith("/search")||path.endsWith("/browse")||path.endsWith("/browse/index")||path.contains("/categories")||path.endsWith("/seasonal_tags");}
     static int integer(String value,int fallback){try{return Integer.parseInt(value);}catch(Exception e){return fallback;}}
     static JSONObject variables(Uri uri)throws Exception {
         JSONObject vars=new JSONObject();String q=uri.getQueryParameter("q");if(q!=null&&!q.trim().isEmpty())vars.put("search",q.trim());
         String sort=uri.getQueryParameter("sort_by");
-        vars.put("sort",new JSONArray().put("alphabetical".equals(sort)?"TITLE_ROMAJI":"newly_added".equals(sort)?"START_DATE_DESC":"POPULARITY_DESC").put("ID"));
+        vars.put("sort",new JSONArray().put("alphabetical".equals(sort)?"TITLE_ROMAJI":"newly_added".equals(sort)?"START_DATE_DESC":"trending".equals(sort)?"TRENDING_DESC":"POPULARITY_DESC").put("ID"));
+        String format=uri.getQueryParameter("format");if(format!=null){if(!"MOVIE".equals(format))throw new BackendBridge.HttpFailure(400,"invalid-format");vars.put("format",format);}
         String cats=uri.getQueryParameter("categories");if(cats!=null&&!cats.isEmpty()){
             JSONArray genres=new JSONArray();for(String category:cats.split(",")){
                 boolean found=false;for(String genre:GENRES)if(category.equals(genreId(genre))||category.equalsIgnoreCase(genre)){genres.put(genre);found=true;break;}
@@ -62,21 +63,49 @@ final class NativeDiscovery {
         JSONObject vars=variables(uri);String key=vars.toString();SearchState state;
         synchronized(SEARCHES){state=SEARCHES.get(key);if(state==null||start==0&&state.expires<android.os.SystemClock.elapsedRealtime()){state=new SearchState();SEARCHES.put(key,state);}}
         synchronized(state){
-            JSONArray grouped=NativeFranchises.collapse(state.records);
-            for(int budget=0;budget<4&&state.more&&grouped.length()<start+limit;budget++){
+            for(int budget=0;budget<4&&state.more&&state.cards.length()<start+limit;budget++){
                 vars.put("page",state.page+1);JSONObject page=NativeMetadata.graph(QUERY,vars).getJSONObject("Page");JSONArray media=page.getJSONArray("media");
-                for(int i=0;i<media.length();i++)state.records.put(record(media.getJSONObject(i)));state.page++;state.more=page.getJSONObject("pageInfo").optBoolean("hasNextPage")&&media.length()>0&&state.records.length()<2000;
-                grouped=NativeFranchises.collapse(state.records);
+                JSONArray incoming=new JSONArray();for(int i=0;i<media.length();i++){JSONObject item=record(media.getJSONObject(i));state.records.put(item);incoming.put(item);}state.page++;state.more=page.getJSONObject("pageInfo").optBoolean("hasNextPage")&&media.length()>0&&state.records.length()<2000;
+                appendStable(state.cards,incoming,state.seen);
             }
-            JSONArray items=new JSONArray();for(int i=start;i<grouped.length()&&items.length()<limit;i++)items.put(BackendBridge.panel(grouped.getJSONObject(i)));
-            int total=grouped.length()+(state.more?1:0);
+            JSONArray items=new JSONArray();for(int i=start;i<state.cards.length()&&items.length()<limit;i++)items.put(BackendBridge.panel(state.cards.getJSONObject(i)));
+            int total=state.cards.length()+(state.more?1:0);
             return BackendBridge.envelope(new JSONArray().put(new JSONObject().put("type","series").put("count",total).put("items",items))).put("total",total);
         }
     }
+    static void appendStable(JSONArray cards,JSONArray incoming,java.util.Set<Integer> seen)throws Exception {
+        JSONArray grouped=NativeFranchises.collapse(incoming);
+        for(int i=0;i<grouped.length();i++){JSONObject item=grouped.getJSONObject(i);java.util.List<Integer> family=NativeFranchises.chain(item.getInt("anilistId"));boolean duplicate=false;for(int id:family)if(seen.contains(id))duplicate=true;seen.addAll(family);if(!duplicate)cards.put(item);}
+    }
     static JSONArray feed(String id)throws Exception {
-        JSONObject vars=variables(Uri.parse("https://local/browse?seasonal_tag="+(id.equals("airing")?"current":currentSeasonId())));vars.put("page",1);
+        JSONObject vars=feedVariables(id);vars.put("page",1);
         JSONArray media=NativeMetadata.graph(QUERY,vars).getJSONObject("Page").getJSONArray("media"),items=new JSONArray();
-        for(int i=0;i<Math.min(20,media.length());i++)items.put(record(media.getJSONObject(i)));return items;
+        for(int i=0;i<media.length();i++)items.put(record(media.getJSONObject(i)).put("_homeSource","anilist"));NativeFranchises.remember(items);return items;
+    }
+    static JSONObject feedVariables(String id)throws Exception {
+        return variables(collectionUri(id,0,50));
+    }
+    static Uri collectionUri(String id,int start,int count)throws Exception {
+        Uri query=Uri.parse("https://local"+NativeHomeFeed.query(id));Uri.Builder target=Uri.parse("https://local/browse").buildUpon();
+        String genre=query.getQueryParameter("genre");if(genre!=null)target.appendQueryParameter("categories",genre);
+        if(id.equals("movies"))target.appendQueryParameter("format","MOVIE");
+        if(id.equals("trending"))target.appendQueryParameter("sort_by","trending");
+        if(id.equals("airing")||id.equals("season"))target.appendQueryParameter("seasonal_tag",id.equals("airing")?"current":currentSeasonId());
+        return target.appendQueryParameter("start",String.valueOf(Math.max(0,start))).appendQueryParameter("n",String.valueOf(Math.max(1,Math.min(100,count)))).build();
+    }
+    static JSONObject detail(int id)throws Exception {
+        // Keep the same shape as discovery and reject a missing record explicitly.
+        JSONObject data=NativeMetadata.graph("query($id:Int){Media(id:$id,type:ANIME,isAdult:false){"+NativeFranchises.FIELDS+"}}",new JSONObject().put("id",id)).optJSONObject("Media");
+        if(data==null)throw new BackendBridge.HttpFailure(404,"title-not-found");return record(data);
+    }
+    static Uri relatedUri(JSONObject title){
+        Uri.Builder query=Uri.parse("https://local/browse?n=25").buildUpon();JSONArray genres=title.optJSONArray("genres");
+        if(genres!=null)for(int i=0;i<genres.length();i++)for(String known:GENRES)if(known.equals(genres.optString(i)))return query.appendQueryParameter("categories",known).build();
+        return query.build();
+    }
+    static JSONObject related(JSONObject title)throws Exception {
+        JSONArray found=route(relatedUri(title)).getJSONArray("data"),items=new JSONArray();java.util.Set<Integer> family=new java.util.HashSet<>(NativeFranchises.chain(title.getInt("anilistId")));
+        for(int i=0;i<found.length()&&items.length()<20;i++){JSONObject card=found.getJSONObject(i);if(!family.contains(Integer.parseInt(card.getString("id").substring(3))))items.put(card);}return BackendBridge.envelope(items);
     }
     static String currentSeasonId(){Calendar now=Calendar.getInstance();return now.get(Calendar.YEAR)+"-"+SEASONS[now.get(Calendar.MONTH)/3].toLowerCase(Locale.US);}
     static int lowerBound(int page,int size,boolean hasNext){return (page-1)*PAGE_SIZE+size+(hasNext?1:0);}
@@ -87,7 +116,7 @@ final class NativeDiscovery {
             .put("title",name).put("nativeTitle",NativeMetadata.string(title,"native")).put("synopsis",description)
             .put("poster",cover(media)).put("banner",NativeMetadata.string(media,"bannerImage"))
             .put("genres",media.optJSONArray("genres")).put("status",media.optString("status")).put("adult",media.optBoolean("isAdult"))
-            .put("format",media.optString("format")).put("relations",media.optJSONObject("relations")==null?new JSONArray():media.getJSONObject("relations").optJSONArray("edges"))
+            .put("format",media.optString("format")).put("relations",media.optJSONObject("relations")==null?new JSONArray():media.getJSONObject("relations").optJSONArray("edges")).put("_relationshipsLoadedAt",android.os.SystemClock.elapsedRealtime())
             .put("episodes",new JSONObject().put("total",media.optInt("episodes"))).put("metadataOnly",true);
     }
     static String cover(JSONObject media){JSONObject image=media.optJSONObject("coverImage");if(image==null)return "";String xl=NativeMetadata.string(image,"extraLarge");return xl.isEmpty()?NativeMetadata.string(image,"large"):xl;}

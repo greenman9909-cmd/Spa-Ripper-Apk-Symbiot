@@ -63,7 +63,7 @@ final class NativeCatalog {
             .put("title",episode.getString("title")).put("images",episode.getJSONObject("images"))
             .put("streams_link",episode.getString("streams_link")).put("episode_metadata",episode);
     }
-    private static JSONObject episode(JSONObject title,JSONObject episode,boolean dubbed)throws Exception {
+    static JSONObject episode(JSONObject title,JSONObject episode,boolean dubbed)throws Exception {
         int id=title.getInt("anilistId"),sourceId=episode.optInt("_sourceId",id),n=episode.getInt("number"),season=NativeSeasons.number(episode);JSONObject available=episode.optJSONObject("available");if(available==null)available=new JSONObject();
         dubbed=dubbed||(!available.optBoolean("sub")&&available.optBoolean("dub"));
         if((dubbed&&!available.optBoolean("dub"))||(!dubbed&&!available.optBoolean("sub")))throw new BackendBridge.HttpFailure(404,"audio-version-unavailable");

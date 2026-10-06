@@ -33,6 +33,7 @@ public final class NativePlayback {
     private static final ThreadPoolExecutor WORKERS=new ThreadPoolExecutor(2,2,30,TimeUnit.SECONDS,new ArrayBlockingQueue<Runnable>(8));
     private static final Pattern ASSET=Pattern.compile("ANI([0-9]+)E([0-9]+)(D)?");
     private static final Pattern DATA_ID=Pattern.compile("data-id\\s*=\\s*[\"']([0-9]{1,12})[\"']");
+    private static final Object[] RESOLVE_LOCKS=new Object[16];static{for(int i=0;i<RESOLVE_LOCKS.length;i++)RESOLVE_LOCKS[i]=new Object();}
     private static final LinkedHashMap<String,Cached> CACHE=new LinkedHashMap<String,Cached>(16,.75f,true){
         protected boolean removeEldestEntry(Map.Entry<String,Cached> e){return size()>16;}
     };
@@ -68,8 +69,11 @@ public final class NativePlayback {
         }catch(Exception e){throw new IOException("Native resolver dispatch failed",e);}
     }
     static JSONObject resolve(String asset)throws Exception {
+        String preferred=BackendBridge.preferredSubtitleLanguage();synchronized(RESOLVE_LOCKS[((asset+":"+preferred).hashCode()&Integer.MAX_VALUE)%RESOLVE_LOCKS.length]){return resolveSource(asset,preferred);}
+    }
+    private static JSONObject resolveSource(String asset,String preferred)throws Exception {
         Matcher m=ASSET.matcher(asset);if(!m.matches())throw new IOException("Unsupported replacement asset");
-        String preferred=BackendBridge.preferredSubtitleLanguage(),cacheKey=asset+":"+preferred;
+        String cacheKey=asset+":"+preferred;
         synchronized(CACHE){Cached c=CACHE.get(cacheKey);if(c!=null&&android.os.SystemClock.elapsedRealtime()-c.time<60000)return new JSONObject(c.json);}
         String audio=m.group(3)==null?"sub":"dub";
         JSONObject response=new JSONObject(get("https://anivexaapi-aniko2.hf.space/api/watch/"+m.group(1)+"/"+audio+"/"+m.group(2),null));
@@ -148,7 +152,7 @@ public final class NativePlayback {
             JSONObject t=tracks.optJSONObject(i);if(t==null||"thumbnails".equals(t.optString("kind")))continue;
             String url=NativeMetadata.string(t,"file");if(url.isEmpty())url=NativeMetadata.string(t,"url");
             try{publicHttps(url);}catch(Exception e){continue;}
-            if(!"vtt".equalsIgnoreCase(t.optString("format"))&&!new URI(url).getPath().toLowerCase(java.util.Locale.US).endsWith(".vtt"))continue;
+            if(!NativeSubtitles.supported(t.optString("format"),new URI(url).getPath()))continue;
             String locale=NativeSubtitles.locale(t);if(locale.isEmpty()||subtitles.has(locale))continue;
             subtitles.put(locale,new JSONObject().put("url",NativeSubtitles.register(url)).put("locale",locale).put("language",locale).put("format","ass"));
         }

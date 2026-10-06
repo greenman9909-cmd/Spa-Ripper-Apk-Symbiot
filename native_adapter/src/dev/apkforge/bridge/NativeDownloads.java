@@ -23,17 +23,22 @@ public final class NativeDownloads {
         // need a subtitle URL/token which expires when the app is restarted.
         android.content.Context context=CloudSession.context(NativeDownloads.class.getClassLoader());String owner=CloudSession.userId();if(owner.isEmpty())throw new BackendBridge.HttpFailure(401,"login-required");
         java.io.File folder=new java.io.File(context.getFilesDir(),"apkforge-offline/"+owner);if(!folder.isDirectory()&&!folder.mkdirs())throw new java.io.IOException("Offline storage unavailable");
-        JSONObject subtitles=streams.getJSONObject("subtitles");Iterator<String> languages=subtitles.keys();
-        while(languages.hasNext()){String language=languages.next();JSONObject track=subtitles.getJSONObject(language);
-            if(!language.matches("[a-z]{2,3}(?:-[A-Za-z0-9]{2,4})?"))continue;
-            java.io.File file=new java.io.File(folder,id+"-"+language+".ass");
-            try{String ass=NativeSubtitles.content(track.getString("url"));try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){out.write(ass.getBytes(java.nio.charset.StandardCharsets.UTF_8));}track.put("localFilePath",file.getAbsolutePath());}
-            catch(Exception unavailable){throw new java.io.IOException("Subtitle download unavailable",unavailable);}
-        }
-        context.getSharedPreferences("apkforge_offline_"+owner,0).edit().putString(id,streams.toString()).apply();
-        synchronized(VERIFIED){VERIFIED.put(id,selected);}
-        return response(selected,subtitles);
+        JSONObject subtitles=streams.getJSONObject("subtitles"),local=new JSONObject();String required=requiredSubtitle(subtitles,BackendBridge.preferredSubtitleLanguage());List<String> languages=new ArrayList<>();if(!required.isEmpty())languages.add(required);Iterator<String> names=subtitles.keys();while(names.hasNext()){String language=names.next();if(!language.equals(required)&&language.matches("[a-z]{2,3}(?:-[A-Za-z0-9]{2,4})?"))languages.add(language);}
+        java.util.concurrent.ExecutorService workers=java.util.concurrent.Executors.newFixedThreadPool(4);Map<String,java.util.concurrent.Future<String>> cues=new LinkedHashMap<>();
+        try{for(String language:languages){String trackUrl=subtitles.getJSONObject(language).getString("url");cues.put(language,workers.submit(()->NativeSubtitles.content(trackUrl)));}
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(30);
+            for(String language:languages){String ass;try{ass=cues.get(language).get(Math.max(1,deadline-System.nanoTime()),java.util.concurrent.TimeUnit.NANOSECONDS);}catch(Exception unavailable){if(language.equals(required))throw new java.io.IOException("Selected subtitle download unavailable",unavailable);continue;}
+                java.io.File file=new java.io.File(folder,id+"-"+language+".ass");android.util.AtomicFile target=new android.util.AtomicFile(file);java.io.FileOutputStream out=null;
+                try{out=target.startWrite();out.write(ass.getBytes(java.nio.charset.StandardCharsets.UTF_8));target.finishWrite(out);}catch(Exception failed){if(out!=null)target.failWrite(out);throw failed;}
+                local.put(language,new JSONObject(subtitles.getJSONObject(language).toString()).put("localFilePath",file.getAbsolutePath()));
+            }
+        }finally{for(java.util.concurrent.Future<String> task:cues.values())task.cancel(true);workers.shutdownNow();}
+        if(!owner.equals(CloudSession.userId()))throw new BackendBridge.HttpFailure(401,"download-account-changed");streams.put("subtitles",local);
+        if(!context.getSharedPreferences("apkforge_offline_"+owner,0).edit().putString(id,streams.toString()).commit())throw new java.io.IOException("Offline metadata could not be saved");
+        synchronized(VERIFIED){VERIFIED.put(owner+":"+id,selected);}
+        return response(selected,local);
     }
+    static String requiredSubtitle(JSONObject subtitles,String preferred){if(subtitles.has(preferred))return preferred;Iterator<String> languages=subtitles.keys();String first="";while(languages.hasNext()){String language=languages.next();if(first.isEmpty())first=language;if(language.split("-")[0].equals(preferred.split("-")[0]))return language;}return subtitles.has("en-US")?"en-US":first;}
     static JSONObject response(String url,JSONObject subtitles)throws Exception {
         return new JSONObject().put("url",url).put("token","").put("subtitles",subtitles).put("captions",new JSONObject());
     }
@@ -60,7 +65,7 @@ public final class NativeDownloads {
     /** Called only for our validated replacement assets; other content retains original behavior. */
     public static boolean start(Object manager,String id,Object stream){
         if(!asset(id))return false;
-        try{String url=(String)stream.getClass().getMethod("getUrl").invoke(stream),expected;synchronized(VERIFIED){expected=VERIFIED.get(id);}if(expected==null||!expected.equals(url))throw new java.io.IOException("Unverified offline source");
+        try{String url=(String)stream.getClass().getMethod("getUrl").invoke(stream),expected;synchronized(VERIFIED){expected=VERIFIED.get(CloudSession.userId()+":"+id);}if(expected==null||!expected.equals(url))throw new java.io.IOException("Unverified offline source");
             ClassLoader loader=manager.getClass().getClassLoader();Class<?> callback=Class.forName("com.ellation.crunchyroll.downloading.exoplayer.ExoPlayerLocalVideosManagerImpl$h",true,loader);
             Object prepare=callback.getConstructor(String.class,stream.getClass(),manager.getClass()).newInstance(id,stream,manager);
             callback.getMethod("invoke",Object.class).invoke(prepare,new Object[]{null});return true;

@@ -55,6 +55,8 @@ final class CloudSession {
     }
     static synchronized String userId(){return session==null?"":session.optJSONObject("user").optString("id");}
     static synchronized String email(){return session==null?"":session.optJSONObject("user").optString("email");}
+    static boolean confirmedUser(JSONObject value){JSONObject user=value==null?null:value.optJSONObject("user");return user!=null&&!user.isNull("email_confirmed_at")&&!user.optString("email_confirmed_at").isEmpty();}
+    static synchronized boolean emailConfirmed(){return confirmedUser(session);}
     static void requireSession()throws Exception {token();}
     private static void notice(String text){
         try{Context app=context(CloudSession.class.getClassLoader());new android.os.Handler(android.os.Looper.getMainLooper()).post(()->android.widget.Toast.makeText(app,text,android.widget.Toast.LENGTH_LONG).show());}catch(Exception ignored){}

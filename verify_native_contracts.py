@@ -49,7 +49,7 @@ def main():
     run('adb', '-s', args.serial, 'push', work / 'classes.dex', remote + '/probe.dex')
     result = run('adb', '-s', args.serial, 'shell', 'env', 'CLASSPATH=' + remote + '/app.apk:' + remote + '/probe.dex',
                  'app_process', '/', 'dev.apkforge.bridge.ModelContractProbe', *(['--cloud-negative'] if args.cloud_negative else []), *(['--stream-live'] if args.stream_live else []), *(['--catalog-live'] if args.catalog_live else []), *(['--subtitles-live'] if args.subtitles_live else []), *(['--franchise-live'] if args.franchise_live else []), capture=True)
-    if 'Native model contracts passed: 93' not in result:
+    if 'Native model contracts passed: 124' not in result:
         raise RuntimeError('Native model contracts did not report success: ' + result)
     print(result.strip())
 
