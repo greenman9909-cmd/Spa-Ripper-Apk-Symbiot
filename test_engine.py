@@ -27,7 +27,11 @@ class EngineTests(unittest.TestCase):
     def test_traversal_rejected(self):
         for path in ('../escape','/absolute','assets/../../escape','assets\\escape','C:/escape'):
             with self.subTest(path=path), self.assertRaises(ValueError):
-                server.inspect_apk(fixture({path:'bad'}))
+                # On Windows ZipInfo normalizes backslashes when writing fixtures.
+                # Patch both local and central directory names to exercise the actual input.
+                data = fixture({path.replace('\\','/'):'bad'})
+                data = data.replace(path.replace('\\','/').encode(),path.encode())
+                server.inspect_apk(data)
     def test_kotlin_metadata_colon_accepted(self):
         session=server.inspect_apk(fixture({'META-INF/Nuvio:composeApp.kotlin_module':b'metadata'}))
         self.assertTrue(any(f['path']=='META-INF/Nuvio:composeApp.kotlin_module' for f in session['report']['files']))

@@ -1,14 +1,28 @@
 name: Tests
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
-  test:
+  auth-return:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node test_auth_return.cjs
+      - run: node --check docs/landing.js
+  test:
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python: ["3.10", "3.12"]
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m unittest -v test_engine.py
+      - run: python -m unittest discover -v
+      - run: python -m compileall -q server.py analysis.py android_formats.py

@@ -1,0 +1,144 @@
+package dev.apkforge.bridge;
+
+import android.net.Uri;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.util.Calendar;
+import java.util.Locale;
+
+/** Paged AniList discovery, with ani.pm retained as the episode availability source. */
+final class NativeDiscovery {
+    private static final int PAGE_SIZE=50;
+    private static final String[] GENRES={"Action","Adventure","Comedy","Drama","Fantasy","Horror","Mahou Shoujo","Mecha","Music","Mystery","Psychological","Romance","Sci-Fi","Slice of Life","Sports","Supernatural","Thriller"};
+    private static final String[] SEASONS={"WINTER","SPRING","SUMMER","FALL"};
+    private static final String QUERY="query($page:Int,$search:String,$genres:[String],$sort:[MediaSort],$season:MediaSeason,$year:Int,$status:MediaStatus,$format:MediaFormat){Page(page:$page,perPage:50){pageInfo{hasNextPage}media(type:ANIME,isAdult:false,search:$search,genre_in:$genres,sort:$sort,season:$season,seasonYear:$year,status:$status,format:$format){"+NativeFranchises.FIELDS+"}}}";
+    private static final java.util.Map<String,SearchState> SEARCHES=new java.util.LinkedHashMap<String,SearchState>(8,.75f,true){protected boolean removeEldestEntry(java.util.Map.Entry<String,SearchState> e){return size()>8;}};
+    private static final class SearchState {final JSONArray records=new JSONArray(),cards=new JSONArray();final java.util.Set<Integer> seen=new java.util.HashSet<>();final long expires=android.os.SystemClock.elapsedRealtime()+120000;int page=0;boolean more=true;}
+    static boolean handles(String path){return path.endsWith("/search")||path.endsWith("/browse")||path.endsWith("/browse/index")||path.contains("/categories")||path.endsWith("/seasonal_tags");}
+    static int integer(String value,int fallback){try{return Integer.parseInt(value);}catch(Exception e){return fallback;}}
+    static JSONObject variables(Uri uri)throws Exception {
+        JSONObject vars=new JSONObject();String q=uri.getQueryParameter("q");if(q!=null&&!q.trim().isEmpty())vars.put("search",q.trim());
+        String sort=uri.getQueryParameter("sort_by");
+        vars.put("sort",new JSONArray().put("alphabetical".equals(sort)?"TITLE_ROMAJI":"newly_added".equals(sort)?"START_DATE_DESC":"trending".equals(sort)?"TRENDING_DESC":"POPULARITY_DESC").put("ID"));
+        String format=uri.getQueryParameter("format");if(format!=null){if(!"MOVIE".equals(format))throw new BackendBridge.HttpFailure(400,"invalid-format");vars.put("format",format);}
+        String cats=uri.getQueryParameter("categories");if(cats!=null&&!cats.isEmpty()){
+            JSONArray genres=new JSONArray();for(String category:cats.split(",")){
+                boolean found=false;for(String genre:GENRES)if(category.equals(genreId(genre))||category.equalsIgnoreCase(genre)){genres.put(genre);found=true;break;}
+                if(!found)throw new BackendBridge.HttpFailure(400,"unknown-category");
+            }vars.put("genres",genres);
+        }
+        String season=uri.getQueryParameter("seasonal_tag");
+        if("current".equals(season))vars.put("status","RELEASING");
+        else if(season!=null&&!season.isEmpty()){
+            if(!season.matches("[12][0-9]{3}-(winter|spring|summer|fall)"))throw new BackendBridge.HttpFailure(400,"invalid-season");
+            vars.put("year",Integer.parseInt(season.substring(0,4))).put("season",season.substring(5).toUpperCase(Locale.US));
+        }
+        return vars;
+    }
+    static JSONObject route(Uri uri)throws Exception {
+        String path=uri.getPath();if(path.contains("/categories"))return categories();
+        if(path.endsWith("/seasonal_tags"))return seasons();
+        // Section-index UI has no trustworthy global counts from AniList. Retain
+        // one full-catalog section; the list itself fetches additional real pages.
+        if(path.endsWith("/browse/index"))return BackendBridge.envelope(new JSONArray().put(new JSONObject().put("prefix","").put("offset",0).put("total",1).put("title","All Anime")));
+        int start=Math.max(0,integer(uri.getQueryParameter("start"),0)),limit=Math.max(1,Math.min(100,integer(uri.getQueryParameter("n"),25)));
+        if(start>100000)throw new BackendBridge.HttpFailure(400,"catalog-offset-too-large");
+        if(path.endsWith("/search"))return search(uri,start,limit);
+        JSONObject vars=variables(uri);JSONArray items=new JSONArray();int cursor=start,total=start;
+        boolean more=true;
+        while(items.length()<limit&&more){
+            int page=cursor/PAGE_SIZE+1,offset=cursor%PAGE_SIZE;vars.put("page",page);
+            JSONObject result=NativeMetadata.graph(QUERY,vars).getJSONObject("Page");JSONArray media=result.getJSONArray("media");
+            more=result.getJSONObject("pageInfo").optBoolean("hasNextPage");
+            JSONArray records=new JSONArray();for(int i=0;i<media.length();i++)records.put(record(media.getJSONObject(i)));NativeFranchises.remember(records);BackendBridge.cache(records);
+            for(int i=offset;i<records.length()&&items.length()<limit;i++){items.put(BackendBridge.panel(records.getJSONObject(i)));cursor++;}
+            total=lowerBound(page,media.length(),more);
+            if(offset>=records.length()||media.length()<PAGE_SIZE)break;
+        }
+        JSONObject response=BackendBridge.envelope(items).put("total",total).put("meta",new JSONObject().put("has_next_page",cursor<total));
+        if(path.endsWith("/search"))return BackendBridge.envelope(new JSONArray().put(new JSONObject().put("type","series").put("count",total).put("items",items))).put("total",total);
+        return response;
+    }
+    private static JSONObject search(Uri uri,int start,int limit)throws Exception {
+        JSONObject vars=variables(uri);String key=vars.toString();SearchState state;
+        synchronized(SEARCHES){state=SEARCHES.get(key);if(state==null||start==0&&state.expires<android.os.SystemClock.elapsedRealtime()){state=new SearchState();SEARCHES.put(key,state);}}
+        synchronized(state){
+            for(int budget=0;budget<4&&state.more&&state.cards.length()<start+limit;budget++){
+                vars.put("page",state.page+1);JSONObject page=NativeMetadata.graph(QUERY,vars).getJSONObject("Page");JSONArray media=page.getJSONArray("media");
+                JSONArray incoming=new JSONArray();for(int i=0;i<media.length();i++){JSONObject item=record(media.getJSONObject(i));state.records.put(item);incoming.put(item);}state.page++;state.more=page.getJSONObject("pageInfo").optBoolean("hasNextPage")&&media.length()>0&&state.records.length()<2000;
+                appendStable(state.cards,incoming,state.seen);
+            }
+            JSONArray items=new JSONArray();for(int i=start;i<state.cards.length()&&items.length()<limit;i++)items.put(BackendBridge.panel(state.cards.getJSONObject(i)));
+            int total=state.cards.length()+(state.more?1:0);
+            return BackendBridge.envelope(new JSONArray().put(new JSONObject().put("type","series").put("count",total).put("items",items))).put("total",total);
+        }
+    }
+    static void appendStable(JSONArray cards,JSONArray incoming,java.util.Set<Integer> seen)throws Exception {
+        JSONArray grouped=NativeFranchises.collapse(incoming);
+        for(int i=0;i<grouped.length();i++){JSONObject item=grouped.getJSONObject(i);java.util.List<Integer> family=NativeFranchises.chain(item.getInt("anilistId"));boolean duplicate=false;for(int id:family)if(seen.contains(id))duplicate=true;seen.addAll(family);if(!duplicate)cards.put(item);}
+    }
+    static JSONArray feed(String id)throws Exception {
+        JSONObject vars=feedVariables(id);vars.put("page",1);
+        JSONArray media=NativeMetadata.graph(QUERY,vars).getJSONObject("Page").getJSONArray("media"),items=new JSONArray();
+        for(int i=0;i<media.length();i++)items.put(record(media.getJSONObject(i)).put("_homeSource","anilist"));NativeFranchises.remember(items);return items;
+    }
+    static JSONObject feedVariables(String id)throws Exception {
+        return variables(collectionUri(id,0,50));
+    }
+    static Uri collectionUri(String id,int start,int count)throws Exception {
+        Uri query=Uri.parse("https://local"+NativeHomeFeed.query(id));Uri.Builder target=Uri.parse("https://local/browse").buildUpon();
+        String genre=query.getQueryParameter("genre");if(genre!=null)target.appendQueryParameter("categories",genre);
+        if(id.equals("movies"))target.appendQueryParameter("format","MOVIE");
+        if(id.equals("trending"))target.appendQueryParameter("sort_by","trending");
+        if(id.equals("airing")||id.equals("season"))target.appendQueryParameter("seasonal_tag",id.equals("airing")?"current":currentSeasonId());
+        return target.appendQueryParameter("start",String.valueOf(Math.max(0,start))).appendQueryParameter("n",String.valueOf(Math.max(1,Math.min(100,count)))).build();
+    }
+    static JSONObject detail(int id)throws Exception {
+        // Keep the same shape as discovery and reject a missing record explicitly.
+        JSONObject data=NativeMetadata.graph("query($id:Int){Media(id:$id,type:ANIME,isAdult:false){"+NativeFranchises.FIELDS+"}}",new JSONObject().put("id",id)).optJSONObject("Media");
+        if(data==null)throw new BackendBridge.HttpFailure(404,"title-not-found");return record(data);
+    }
+    static Uri relatedUri(JSONObject title){
+        Uri.Builder query=Uri.parse("https://local/browse?n=25").buildUpon();JSONArray genres=title.optJSONArray("genres");
+        if(genres!=null)for(int i=0;i<genres.length();i++)for(String known:GENRES)if(known.equals(genres.optString(i)))return query.appendQueryParameter("categories",known).build();
+        return query.build();
+    }
+    static JSONObject related(JSONObject title)throws Exception {
+        JSONArray found=route(relatedUri(title)).getJSONArray("data"),items=new JSONArray();java.util.Set<Integer> family=new java.util.HashSet<>(NativeFranchises.chain(title.getInt("anilistId")));
+        for(int i=0;i<found.length()&&items.length()<20;i++){JSONObject card=found.getJSONObject(i);if(!family.contains(Integer.parseInt(card.getString("id").substring(3))))items.put(card);}return BackendBridge.envelope(items);
+    }
+    static String currentSeasonId(){Calendar now=Calendar.getInstance();return now.get(Calendar.YEAR)+"-"+SEASONS[now.get(Calendar.MONTH)/3].toLowerCase(Locale.US);}
+    static int lowerBound(int page,int size,boolean hasNext){return (page-1)*PAGE_SIZE+size+(hasNext?1:0);}
+    static JSONObject record(JSONObject media)throws Exception {
+        JSONObject title=media.getJSONObject("title");String name=NativeMetadata.string(title,"english");if(name.isEmpty())name=NativeMetadata.string(title,"romaji");
+        String description=NativeMetadata.string(media,"description").replaceAll("(?i)<br\\s*/?>","\n").replaceAll("<[^>]*>","");
+        return new JSONObject().put("anilistId",media.getInt("id")).put("malId",media.optInt("idMal"))
+            .put("title",name).put("nativeTitle",NativeMetadata.string(title,"native")).put("synopsis",description)
+            .put("poster",cover(media)).put("banner",NativeMetadata.string(media,"bannerImage"))
+            .put("genres",media.optJSONArray("genres")).put("status",media.optString("status")).put("adult",media.optBoolean("isAdult"))
+            .put("format",media.optString("format")).put("relations",media.optJSONObject("relations")==null?new JSONArray():media.getJSONObject("relations").optJSONArray("edges")).put("_relationshipsLoadedAt",android.os.SystemClock.elapsedRealtime())
+            .put("episodes",new JSONObject().put("total",media.optInt("episodes"))).put("metadataOnly",true);
+    }
+    static String cover(JSONObject media){JSONObject image=media.optJSONObject("coverImage");if(image==null)return "";String xl=NativeMetadata.string(image,"extraLarge");return xl.isEmpty()?NativeMetadata.string(image,"large"):xl;}
+    static String genreId(String genre){return genre.toLowerCase(Locale.US).replace(' ','-');}
+    static JSONObject categories()throws Exception {return categories(true);}
+    static JSONObject categories(boolean includeArtwork)throws Exception {
+        JSONObject artwork=null;
+        try{if(includeArtwork){StringBuilder query=new StringBuilder("query{");for(int i=0;i<GENRES.length;i++)query.append("g").append(i).append(":Page(perPage:1){media(type:ANIME,isAdult:false,genre:\"").append(GENRES[i]).append("\",sort:POPULARITY_DESC){coverImage{extraLarge large}bannerImage}} ");query.append('}');artwork=NativeMetadata.graph(query.toString(),new JSONObject());}}
+        catch(Exception unavailable){android.util.Log.w("APKForgeMetadata","Genre artwork unavailable; preserving clickable categories");}
+        JSONArray items=new JSONArray();for(int i=0;i<GENRES.length;i++){
+            String genre=GENRES[i];JSONObject category=new JSONObject().put("id",genreId(genre)).put("localization",new JSONObject().put("title",genre).put("description","").put("locale","en-US"));
+            if(artwork!=null){JSONObject page=artwork.optJSONObject("g"+i);JSONArray media=page==null?null:page.optJSONArray("media");if(media!=null&&media.length()>0){JSONObject m=media.getJSONObject(0);String image=NativeMetadata.string(m,"bannerImage");if(image.isEmpty())image=cover(m);
+                if(!image.isEmpty())category.put("images",new JSONObject().put("background",new JSONArray().put(new JSONObject().put("source",NativeArtwork.wide(image)).put("width",1280).put("height",720))).put("low",new JSONArray()));}}
+            items.put(category);
+        }
+        return BackendBridge.envelope(items);
+    }
+    static JSONObject seasons()throws Exception {
+        JSONArray items=new JSONArray().put(new JSONObject().put("id","current").put("localization",new JSONObject().put("title","Currently Airing")));
+        Calendar now=Calendar.getInstance();int year=now.get(Calendar.YEAR),quarter=now.get(Calendar.MONTH)/3;
+        for(int i=0;i<8;i++){String season=SEASONS[quarter];items.put(new JSONObject().put("id",year+"-"+season.toLowerCase(Locale.US))
+            .put("localization",new JSONObject().put("title",season.charAt(0)+season.substring(1).toLowerCase(Locale.US)+" "+year)));if(--quarter<0){quarter=3;year--;}}
+        return BackendBridge.envelope(items);
+    }
+}

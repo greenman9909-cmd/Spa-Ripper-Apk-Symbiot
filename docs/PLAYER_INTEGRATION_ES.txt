@@ -1,0 +1,406 @@
+REPRODUCTOR PARA TU WEB EXISTENTE — DATOS E INTEGRACIÓN
+2026-10-06. Guía específica del player; no necesitas rehacer tu web.
+
+QUÉ ENTREGAR A TU AGENTE
+Este archivo y estos módulos del repositorio:
+native_adapter/src/dev/apkforge/bridge/NativePlayback.java
+native_adapter/src/dev/apkforge/bridge/NativeSubtitles.java
+native_adapter/src/dev/apkforge/bridge/NativeWatchCache.java
+native_adapter/src/dev/apkforge/bridge/NativeEpisodes.java
+native_adapter/tests/dev/apkforge/bridge/ModelContractProbe.java
+Base revisada: b14f27bb2cc5e7f0c9b35623e8cf8b429f2d928b.
+Repo: https://github.com/greenman9909-cmd/Spa-Ripper-Apk-Symbiot
+Rama: codex/evidence-driven-apk-analysis
+La guía general WEB_PLAYER_HANDOFF_ES.txt es opcional para catálogo/cuentas.
+La APK está pausada; integrar solamente el player en la web que ya tienes.
+
+1. PETICIONES EXACTAS
+
+Base del proveedor utilizado: https://anivexaapi-aniko2.hf.space/api
+
+GET /episodes/{anilistId}
+GET /watch/{anilistId}/{audio}/{episode}
+audio: sub o dub. episode: número absoluto positivo de la fuente seleccionada.
+No confundir AniList ID, MAL ID, índice del selector de temporada y número local.
+Si tu web ya tiene una lista, confirmar que el episodio existe para esa identidad
+y audio. /episodes debe traer meta.malId positivo igual al idMal real del AniList
+solicitado; validar records.id como watch/anikoto/{id}/{audio}/anikoto-{number}.
+Solo habilitar audio listado en su grupo y con booleano correspondiente true.
+No usar la rama sin MAL que estima disponibilidad; no fabricar episodios con el
+contador de catálogo. NativeEpisodes.java contiene esas reglas exactas.
+
+Casos conocidos:
+Frieren: AniList 154587, episodio 1
+Naruto: AniList 20, episodio 1
+One Piece: AniList 21, episodio 1
+Bleach: AniList 269
+
+Ejemplos para ejecutar desde backend o terminal de desarrollo:
+curl --fail --max-time 20 -H 'Accept: application/json' 'https://anivexaapi-aniko2.hf.space/api/watch/154587/sub/1'
+curl --fail --max-time 20 -H 'Accept: application/json' 'https://anivexaapi-aniko2.hf.space/api/episodes/154587'
+No publicar la respuesta completa de watch en logs: puede incluir URLs temporales.
+Los ejemplos curl usan sintaxis POSIX; adaptar el quoting si se usa PowerShell.
+
+No se requiere mandar una contraseña Crunchyroll o sesión Supabase al proveedor
+en las llamadas que usamos. Auth de tu web y autorización del proveedor son cosas
+separadas; no afirmar que login web concede permisos sobre cualquier fuente.
+
+Seleccionar response.ssub cuando audio=sub; response.sdub cuando audio=dub.
+No caer automáticamente al otro audio si el bundle solicitado está ausente.
+Exigir objeto bundle y array streams, no simplemente HTTP 200.
+
+2. FORMA REAL OBSERVADA HOY (NO URLS PERMANENTES)
+
+Se consultaron /watch/154587/sub/1 y /watch/20/sub/1 una vez cada uno, mediante
+HTTPS normal desde este equipo. Esto verifica el bundle actual, no reproducción
+en tu navegador ni todos los episodios. No se abrieron embeds ni scripts de anuncios.
+
+Ambos devolvieron rootKeys=[ssub]. Bundle con estas claves:
+intro, outro, provider, streams, subtitles.
+streams: 3 registros. Claves de cada registro:
+priority, referer, server, type, url.
+Los tres type=embed, host megaplay.buzz, sin hardsub_locale ni hardsubLocale.
+Por tanto: NO pasar esos URLs directamente a video.src y NO afirmar que hoy esos
+bundles anuncian un vídeo con hard subs. La resolución posterior puede aportar
+más información; validar antes de prometerlo.
+
+subtitles[]: claves observadas en cada pista:
+default, encoding, file, format, kind, label, language, source.
+file es URL de la pista. format=vtt en todos estos registros observados.
+
+Frieren E1 sub: 9 pistas declaradas en el bundle:
+label                                  language raw    locale normalizado APK
+Arabic                                 ar              ar-SA
+English                                en              en-US
+French                                 fr              fr-FR
+German                                 de              de-DE
+Italian                                it              it-IT
+Portuguese (- Portuguese(Brazil))       und             pt-BR
+Russian                                und             ru-RU
+Spanish                                es              es-ES
+Spanish (- Spanish(Latin America))     und             es-419
+
+Las pistas Frieren apuntaban a sggwk.moonridge.website, con ruta .vtt.
+intro: start=0, end=89; outro: start=1460, end=1549 (segundos).
+Estos intervalos pertenecen a esa respuesta, NO son constantes para todos los animes.
+Las pruebas Android anteriores descargaron y convirtieron inglés y ambos españoles;
+esta comprobación nueva solo leyó sus registros. La calidad de traducción no fue
+auditada y no se promete sincronización web solo por existir una pista.
+
+Naruto E1 sub: 1 pista, English / en -> en-US, format=vtt.
+Host observado de pista: qazos.crystaldrift.website.
+intro: start=0, end=0 -> INVÁLIDO, no mostrar Skip intro.
+outro: start=1280, end=1369. Confirmar también contra duración real al reproducir.
+No mostrar español o doblajes extra para Naruto E1 que esta respuesta no declara.
+
+No hardcodear esos hosts de pistas como si fueran todas las CDNs posibles: cambian.
+Inventariar y aprobar hosts del proveedor para entrega segura; no convertir esto
+en un proxy abierto. Las URLs completas deben obtenerse cuando se pulsa Play;
+este documento no publica enlaces temporales que luego quedarían rotos.
+
+3. CÓMO RESOLVEMOS VÍDEO EN ANDROID
+
+NativePlayback.watchBundle(): obtiene ssub/sdub según audio.
+NativePlayback.resolveSource(): evalúa hasta 8 fuentes; preferencia por hard sub
+del idioma seleccionado, después fuente sin hard sub o con el mismo idioma.
+NativePlayback.directSource(): admite type=hls solo con HTTPS pública y contrato
+de referer que coincide con https://megaplay.buzz/.
+
+En fuentes type=embed de MegaPlay, el código existente:
+1) Valida host exactamente megaplay.buzz y ruta /stream/.
+2) Lee HTML de esa ruta sin ejecutarlo, extrae data-id numérico acotado.
+3) Consulta https://megaplay.buzz/stream/getSources?id={dataId}.
+4) NativePlayback.decodeSources() decodifica el campo enc del contrato existente.
+5) Lee decoded.file y verifica HTTPS y manifiesto que empieza con #EXTM3U.
+6) Agrega pistas del bundle, sources.tracks y decoded.tracks.
+7) Usa hardsub_locale/hardsubLocale declarados y rangos reales disponibles.
+
+Portar ese adaptador al BACKEND cuando el uso esté permitido por la fuente;
+no ejecutar HTML del proveedor, no iframe, no window.open ni navegación publicitaria.
+decodeSources() contiene el contrato de cifrado/padding concreto del proveedor:
+referirse al código revisado, no tratarlo como estándar HLS ni usarlo para saltar
+DRM, cuentas, pagos o restricciones de acceso. Ese contrato externo puede cambiar.
+
+Cabeceras de media que hoy usa la APK:
+Referer: https://megaplay.buzz/
+User-Agent: Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36
+En la petición getSources, la APK usa como Referer la URL embed correspondiente.
+Estas cabeceras no se pueden copiar libremente al navegador para simular Android.
+Una URL extraída válida en Android puede fallar en web por CORS/Referer/caducidad.
+
+4. DECISIÓN NECESARIA: DIRECTO O ENTREGA BACKEND
+
+La prueba decisiva ocurre desde el DOMINIO REAL de tu web:
+- Master, variantes, segmentos, pistas y recursos necesarios permiten CORS y las
+  condiciones de acceso -> se puede reproducir directo.
+- Fuente permite entrega por servidor y exige cabeceras no disponibles en navegador
+  -> backend controlado para resolver y entregar media.
+- Fuente no permite ese uso -> no declarar una reproducción garantizada; usar una
+  fuente compatible y autorizada. No usar el backend para eludir una prohibición.
+
+Devolver una URL del resolver al cliente no arregla las peticiones de segmentos.
+Si se necesita relay, reescribir el árbol HLS completo con parser: master, variantes,
+EXT-X-MEDIA, mapas/init, segmentos, claves legítimas, URI relativas y querystrings.
+Conservar Range/206/Content-Range cuando proceda, streaming/backpressure/cancelación,
+timeouts, cuotas y límites de tamaño. No descargar la película entera a RAM.
+No transmitir cookies/Authorization de tu usuario al proveedor.
+
+El endpoint de relay debe aceptar opaqueId emitido por tu backend, no ?url=cualquiera.
+Validar HTTPS, hosts explícitos aprobados y DNS/IP públicos en cada salto; impedir
+SSRF, redirecciones a redes privadas y puertos arbitrarios. Validar de nuevo en
+fetch; no basta una expresión regular ni publicHttps() de la clase Android.
+No publicar URLs firmadas, tokens ni payloads completos en logs.
+Resolución/bundles son temporales: cache limitada en RAM, no catálogo persistente.
+
+GitHub Pages no ejecuta ese backend. Puedes mantener tu web actual y añadirle una
+API aparte si hace falta. Elegir hosting por streaming, tiempos y coste de egress;
+no asumir que una función gratuita soporta la entrega de vídeos largos.
+
+5. CONTRATO ENTRE TU WEB Y TU BACKEND (PROPUESTO, POR IMPLEMENTAR)
+
+POST /api/player/resolve
+Content-Type: application/json
+{
+  "anilistId": 154587,
+  "episode": 1,
+  "audio": "sub",
+  "subtitleLanguage": "es-419"
+}
+No enviar título/imagen como identidad. Si tu web usa MAL, mapear a AniList y
+validar coincidencia; no pasar el MAL ID al endpoint que exige AniList.
+
+Respuesta normalizada PROPUESTA, las URLs de ejemplo son placeholders:
+{
+  "anilistId": 154587,
+  "episode": 1,
+  "audio": "sub",
+  "source": {
+    "type": "hls",
+    "mode": "relay",
+    "url": "/api/player/media/<opaqueId>/master.m3u8",
+    "hardsubLocale": null
+  },
+  "subtitles": [
+    {"language":"es-419","label":"Español (Latinoamérica)","format":"vtt",
+     "url":"/api/player/subtitles/<opaqueId>.vtt"}
+  ],
+  "intro": {"start":0,"end":89},
+  "outro": {"start":1460,"end":1549}
+}
+mode=direct solo si se aceptó el uso desde navegador; devolver entonces URL actual.
+Si existe hard sub coincidente: indicar locale real y desactivar pistas superpuestas.
+No poner una fecha expiresAt inventada: añadirla solo cuando sea conocida o emitida
+por tu backend para sus propios IDs; cache local nunca prolonga permiso de una URL.
+
+Errores propuestos: {"error":{"code":"SOURCE_UNAVAILABLE","retryable":true}}.
+Separar INVALID_REQUEST, REQUESTED_AUDIO_UNAVAILABLE, SUBTITLE_UNAVAILABLE,
+PROVIDER_RATE_LIMITED, SOURCE_UNAVAILABLE y CONTRACT_CHANGED. HTTP coherente,
+retryAfterSeconds cuando sea real. Nunca reemplazar el vídeo por Home o por otra
+temporada al fallar. No filtrar mensajes privados del upstream al frontend.
+
+6. HARD SUBS Y SOFT SUBS: POLÍTICA EXACTA
+
+Preferir hard subs para el idioma elegido, permitir pistas separadas.
+Hard sub significa texto grabado en los píxeles. No se cambia su fuente, tamaño,
+idioma ni posición con CSS, y no se puede desactivar sin otra copia de vídeo.
+Lo que implementamos para letras grandes blancas es ESTILO DE PISTAS SEPARADAS;
+la APK no quema ni traduce nuevos subtítulos en el vídeo.
+
+Algoritmo:
+1) Normalizar idioma solicitado y locales declarados.
+2) Fuente con hardsub locale exactamente coincidente -> preferida.
+3) Si no, fuente sin hard sub + pista de ese idioma -> preferida.
+4) Si no, ofrecer idiomas reales o None; no fallback silencioso a otro idioma.
+5) Fuente con hard sub de otro idioma no debe presentarse como traducción solicitada.
+Solo marcar hard sub con hardsub_locale/hardsubLocale explícito; audio=sub no prueba
+que haya texto grabado. La metadata ausente es desconocida, no prueba universal
+de que los píxeles carezcan de subtítulos; documentar y comprobar visualmente.
+
+Track mapping desde el proveedor:
+URL: file, si falta url. Excluir kind=thumbnails.
+Formato: format, con extensión de URL como alternativa; aceptar VTT/SRT/ASS/SSA.
+Locale: language -> srclang -> locale; normalizar '_' a '-'. Si und/vacío, usar
+label real. Spanish + Latin/Latam -> es-419; Portuguese + Brazil -> pt-BR.
+Español genérico se normaliza es-ES en el adaptador actual; conservar esta regla
+explícita, no asegurar dialecto auditado por etiqueta sola. zh-Hant -> zh-TW,
+zh-Hans -> zh-CN. No convertir es-419 en es-ES ni eliminar Unicode.
+Mostrar idiomas del episodio actual, no una lista universal de 35 idiomas.
+No poner nombres de doblajes porque exista una pista de subtítulos en ese idioma.
+
+NativeSubtitles registra URLs appassets.androidplatform.net para libass Android.
+NO usarlas en tu web. Servir pista convertida por tu API o usar URL real compatible
+con CORS. Content-Type: text/vtt; charset=utf-8 para salida WebVTT.
+Convertir SRT tiempos con coma y ASS/SSA a cues temporizados si se usa overlay;
+esto simplifica karaoke/posicionamiento/estilos ASS complejos. Para conservar ASS
+completo, elegir renderer mantenido y probar fuentes/WASM/fullscreen aparte.
+Rechazar HTML/errores, tiempos NaN, end<=start, cues vacíos y payloads excesivos.
+NativeSubtitles usa límite 1 MiB. No renderizar texto remoto mediante innerHTML.
+
+7. ESTILO COMO PEDISTE
+
+Preset Android actual: lienzo 1280x720, Arial 40, Bold -1, blanco #fff,
+contorno negro 2.5, sombra 1, alineación inferior centrada, márgenes 36.
+Escalar con el rectángulo real del vídeo y preservar multilínea. No calcular tamaño
+desde el ancho de toda la pantalla cuando vídeo tenga letterboxing.
+
+CSS de ejemplo para OVERLAY de pistas separadas (adaptar a tu layout):
+
+.player-frame { position: relative; background: #000; }
+.player-frame video { display: block; width: 100%; max-height: 100dvh; object-fit: contain; }
+.player-cues {
+  position: absolute; left: 3%; right: 3%; bottom: var(--cue-bottom, 5%);
+  color: #fff; font-family: Arial, sans-serif; font-weight: 700;
+  font-size: var(--cue-size, 24px); line-height: 1.2; text-align: center;
+  white-space: pre-line; overflow-wrap: break-word; pointer-events: none;
+  text-shadow: -2px -2px 0 #000, 2px -2px 0 #000,
+               -2px 2px 0 #000, 2px 2px 0 #000, 0 2px 3px #000;
+}
+
+Calcular cue-size = 40 * videoRect.height / 720 (con accesibilidad configurada),
+cue-bottom = 36 * videoRect.height / 720 + offset vertical del vídeo en el wrapper.
+Si hay dos líneas, ambas deben quedar en el rectángulo del vídeo, no sobre controles.
+ResizeObserver actualiza medidas; no listeners de resize duplicados por episodio.
+En tracks HTML, usar mode=hidden y activeCues para overlay, o mode=showing y ::cue
+para rendering nativo: nunca ambos. overlay.textContent = texto saneado de cues.
+Hard sub coincidente -> limpiar overlay y desactivar tracks separados.
+
+Fullscreen debe solicitarse al wrapper que contiene vídeo, cues y controles.
+iPhone puede usar fullscreen nativo de vídeo sin tu overlay: prever pistas nativas
+o renderer compatible y probar el dispositivo; no prometer CSS uniforme en ese modo.
+Picture-in-picture también puede omitir overlays DOM; decidir comportamiento real.
+
+8. CÓDIGO MÍNIMO DE CONEXIÓN DEL VÍDEO (NO ES UN BACKEND COMPLETO)
+
+Ejemplo módulo para un frontend con bundler y HLS.js instalado/versionado.
+No pegues import 'hls.js' en GitHub Pages sin bundler o módulo servido compatible.
+pin de dependencia + lockfile, no CDN con @latest en producción.
+html esperado: video #web-video, mensaje #player-message en la ficha actual.
+El ejemplo maneja cambio rápido/cancelación y no navega a Home por error.
+Faltan en él UI de tracks/overlay/fullscreen/skip y el backend de la sección 5.
+
+import Hls from 'hls.js';
+const video = document.querySelector('#web-video');
+const message = document.querySelector('#player-message');
+let hls = null, pending = null, generation = 0;
+function releaseVideo() {
+  video.pause();
+  hls?.destroy(); hls = null;
+  video.removeAttribute('src'); video.load();
+  // Aquí retirar tracks/listeners/cues del episodio anterior en tu componente.
+}
+export async function openEpisode(request) {
+  const current = ++generation;
+  pending?.abort();
+  pending = new AbortController();
+  const controller = pending;
+  const deadline = setTimeout(() => controller.abort(), 30000);
+  releaseVideo();
+  message.textContent = 'Preparando el episodio…';
+  try {
+    const response = await fetch('/api/player/resolve', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin', signal: controller.signal,
+      body: JSON.stringify(request)
+    });
+    if (!response.ok) throw new Error('resolve');
+    const result = await response.json();
+    if (current !== generation) return;
+    if (result.anilistId !== request.anilistId || result.episode !== request.episode ||
+        result.audio !== request.audio || result.source?.type !== 'hls') {
+      throw new Error('identity');
+    }
+    const url = new URL(result.source.url, location.href);
+    // Validar aquí origen/hosts que tu API aprobó; backend valida también.
+    if (url.protocol !== 'https:' && url.origin !== location.origin) throw new Error('url');
+    if (Hls.isSupported()) {
+      hls = new Hls();
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (current === generation && data.fatal) {
+          releaseVideo();
+          message.textContent = 'No se pudo reproducir. Reintenta este episodio.';
+        }
+      });
+      hls.loadSource(url.href); hls.attachMedia(video);
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url.href;
+    } else {
+      throw new Error('unsupported');
+    }
+    message.textContent = 'Pulsa reproducir.';
+    // Montar selector/track elegido e intervalos reales a partir de result.
+    // Autoplay puede bloquearse; mantener un botón Play visible y accesible.
+  } catch (error) {
+    if (current !== generation) return;
+    releaseVideo();
+    message.textContent = 'No se pudo preparar el episodio. Puedes reintentar.';
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+export function closePlayer() {
+  ++generation; pending?.abort(); pending = null; releaseVideo();
+}
+
+Si la API está en otro dominio, ajustar URL, credentials y CORS de tu auth; no
+habilitar wildcard + credentials. El ejemplo usa /api relativo a raíz: adaptarlo
+si tu sitio vive bajo /Spa-Ripper-Apk-Symbiot/ o en otro basePath.
+El handler fatal es conservador. Añadir recuperación finita documentada, no
+startLoad/recoverMediaError infinito cada vez que una fuente sigue caída.
+
+9. SKIP, EPISODIO SIGUIENTE Y PROGRESO
+
+Skip intro visible solo cuando currentTime>=start && currentTime<end,
+start/end finitos, start>=0, end>start y end<=duración real.
+Click: video.currentTime = end. Lo mismo para outro si se ofrece.
+No lanzar otra resolución completa para pedir skip: reutilizar bundle actual.
+Si faltan rangos, ocultar botón. Naruto intro 0..0 debe quedar oculto.
+El siguiente episodio sale de la lista real de la misma fuente/temporada; no
+incrementar índice UI y asumir que equivale al número del proveedor.
+Guardar progreso por usuario/perfil/ID/episodio/audio usando tu sistema existente;
+no escribir en Supabase sin revisar schema compatible con la APK.
+
+10. LÍMITES/ERRORES Y PRUEBAS DEL PLAYER
+
+Cache APK de referencia: bundle 45 s, errores 5 s, 16 entradas / 2 Mi caracteres;
+resolución por asset+idioma 60 s. Son políticas iniciales, no permiso para mantener
+una URL más allá de su expiración. Coalescer requests Play+Skip en un solo bundle.
+Usar AbortController, cola/concurrencia limitada y bounded retry con Retry-After.
+Un error de pista opcional no debe derribar el vídeo si el usuario acepta otro idioma;
+si pidió una pista y falla, avisar claramente, no decir que está viendo español.
+
+Pruebas antes de anunciar listo:
+1. Frieren E1 sub: elegir ambos españoles reales, seek y sincronización visible.
+2. Naruto E1: inglés/None, nada inventado; intro inválida no muestra Skip.
+3. One Piece E1: vídeo avanza, se oye, carga segmentos y sobrevive fullscreen.
+4. Hard sub del idioma solicitado solo con metadata y aceptación visual; doble
+   overlay no aparece, y hard sub de otro idioma no se selecciona silenciosamente.
+5. Cambiar rápido dos episodios: abort/identity impiden que gane una respuesta vieja.
+6. 429, URL caduca, HTML 200, master bueno/segmento malo, subtítulo caído, sin audio
+   solicitado: error localizado, reintento finito, sin volver a Home.
+7. Repetir abrir/cerrar: no acumular HLS/listeners/conexiones/track nodes.
+8. Chrome/Firefox desktop, Android y Safari/iPhone reales: CORS, fullscreen, cues,
+   autoplay, controles, dimensiones 4:3 y 16:9, teclado y accesibilidad.
+9. Confirmar que no se ejecutan scripts externos/embed, no hay window.open y no
+   salta a Google. Esto no demuestra que el archivo no incluya publicidad propia.
+
+No publicar tokens, cookies, contraseñas ni URLs temporales completas en fixtures.
+La consulta de hoy verifica forma y pistas declaradas, no hard subs garantizados.
+No llamarlo producción hasta completar vídeo+audio+subs en tu dominio real.
+
+11. FUENTES Y PUNTO DE ENTRADA PARA TU AGENTE
+
+HLS/browser y CORS: https://github.com/video-dev/hls.js
+Restricciones de cabeceras: https://developer.mozilla.org/en-US/docs/Glossary/Forbidden_request_header
+API del proveedor: https://huggingface.co/spaces/anivexaapi/aniko2/blob/main/server.js
+Implementación proveedor: https://huggingface.co/spaces/anivexaapi/aniko2/blob/main/scraper.js
+Pruebas/evidencia APK: VALIDATION_0.4.11.md; ModelContractProbe.java --stream-live y
+--subtitles-live sirven de referencia Android, no son pruebas del player web.
+
+INSTRUCCIÓN PARA CONTINUAR:
+Integra únicamente este reproductor en la web existente. Primero determina su
+framework/backend y prueba /watch con identidad exacta y reproducción desde el
+dominio real. Portar reglas de NativePlayback/NativeSubtitles; no iframe/ad scripts.
+Implementa el endpoint normalizado y entrega HLS autorizada si es necesaria.
+Mantén selector de idiomas real, preferencia hard sub coincidente y estilo blanco
+con borde negro para pistas separadas. No rehagas catálogo/cuentas ni modifiques
+la APK pausada. Entrega código revisable y resultados de las pruebas anteriores.

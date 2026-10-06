@@ -8,3 +8,7 @@ __pycache__/
 .env
 upload/
 recovered/
+.tools/
+android-build/
+*.jks
+*.keystore
